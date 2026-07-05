@@ -283,7 +283,6 @@ in
       environment =
         commonEnvironment
         // {
-          OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN = "true";
           OPENCODE_HOST = opencodeUrl;
           OPENCODE_SKIP_START = "true";
         }
