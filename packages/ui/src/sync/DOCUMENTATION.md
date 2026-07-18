@@ -100,8 +100,9 @@ VS Code does not run the server permission-auto-accept runtime. The extension ho
    - title update
    - share
    - unshare
-   - archive
-   - delete
+    - archive
+    - delete
+    - move to another worktree directory
    - retention cleanup batch archive/delete
 
 This keeps cold/global lists responsive without requiring a refetch after every change.
@@ -125,6 +126,7 @@ Examples of global-store updates performed in `session-actions.ts`:
 - `shareSession()` / `unshareSession()` -> `upsertSession(result.data)`
 - `archiveSession()` -> `archiveSessions([id], archivedAt)`
 - `deleteSession()` -> `removeSessions([id])`
+- `moveSessionToDirectory()` -> move the session between directory stores and update the global directory index
 
 ## The golden rule
 
