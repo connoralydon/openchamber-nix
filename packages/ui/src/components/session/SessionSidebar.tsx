@@ -1324,9 +1324,15 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
       }));
   }, [sectionsForRender, showArchivedSessions]);
 
-  const prLookupKeys = React.useMemo(() => {
-    if (!isVisible) return EMPTY_STRING_ARRAY;
+  const prLookup = React.useMemo(() => {
+    if (!isVisible) {
+      return {
+        keys: EMPTY_STRING_ARRAY,
+        displayKeyByLookupKey: new Map<string, string>(),
+      };
+    }
     const keys = new Set<string>();
+    const displayKeyByLookupKey = new Map<string, string>();
     sectionsForSidebarRender.forEach((section) => {
       section.groups.forEach((group) => {
         const directory = normalizePath(group.directory ?? null);
@@ -1334,13 +1340,15 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
         if (!directory || !branch) {
           return;
         }
-        keys.add(getGitHubPrStatusKey(directory, branch));
+        const lookupKey = getGitHubPrStatusKey(directory, branch);
+        keys.add(lookupKey);
+        displayKeyByLookupKey.set(lookupKey, `${directory}::${branch}`);
       });
     });
-    return [...keys];
+    return { keys: [...keys], displayKeyByLookupKey };
   }, [gitBranches, isVisible, sectionsForSidebarRender]);
 
-  const prVisualSummaryMap = usePrVisualSummaryByKeys(prLookupKeys);
+  const prVisualSummaryMap = usePrVisualSummaryByKeys(prLookup.keys);
 
   React.useEffect(() => {
     if (!isVisible || !githubAuthChecked || !githubAuthStatus?.connected || !github) {
@@ -1505,7 +1513,11 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
   const prVisualStateByDirectoryBranch = React.useMemo(() => {
     const result = new Map<string, PrIndicator>();
     for (const [key, summary] of prVisualSummaryMap) {
-      result.set(key, {
+      const displayKey = prLookup.displayKeyByLookupKey.get(key);
+      if (!displayKey) {
+        continue;
+      }
+      result.set(displayKey, {
         visualState: summary.visualState as PrVisualState,
         number: summary.number,
         url: summary.url,
@@ -1521,7 +1533,7 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
       });
     }
     return result;
-  }, [prVisualSummaryMap]);
+  }, [prLookup.displayKeyByLookupKey, prVisualSummaryMap]);
 
   const renderGroupSessions = React.useCallback(
     (
