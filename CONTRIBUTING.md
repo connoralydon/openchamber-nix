@@ -219,6 +219,11 @@ the previous readiness label before it starts, and only `review:ready` means
 the pull request is ready to enter the maintainer review queue. Draft pull
 requests have no readiness label.
 
+The workflow publishes a separate `review` check on the exact reviewed HEAD;
+only `review:ready` passes it. The `automation` job reports workflow execution
+independently so a manual `/oc-review` result can update readiness without
+being attached to the default-branch commit that triggered the command.
+
 Each completed review creates a new comment tied to its reviewed HEAD so the
 conversation remains chronological. Previous review comments are not rewritten.
 

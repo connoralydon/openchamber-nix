@@ -17,12 +17,16 @@ concurrency:
 
 jobs:
   review:
+    # Manual comment workflows run on the default branch, so their native job
+    # check cannot represent the reviewed PR HEAD. Publish that check explicitly.
+    name: automation
     if: |
       github.event_name == 'pull_request_target' ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.user.login != 'openchamber-bot[bot]' && (github.event.comment.body == '/oc-review' || startsWith(github.event.comment.body, '/oc-review ') || github.event.comment.body == '@openchamber-bot review' || startsWith(github.event.comment.body, '@openchamber-bot review '))) ||
       (github.event_name == 'pull_request_review_comment' && github.event.comment.user.login != 'openchamber-bot[bot]' && (github.event.comment.body == '/oc-review' || startsWith(github.event.comment.body, '/oc-review ') || github.event.comment.body == '@openchamber-bot review' || startsWith(github.event.comment.body, '@openchamber-bot review ')))
     runs-on: ubuntu-latest
     permissions:
+      checks: write
       contents: read
       pull-requests: write
       issues: write
@@ -32,21 +36,17 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Generate review app token
-        id: app-token
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
-        with:
-          app-id: ${{ secrets.OC_REVIEW_APP_ID }}
-          private-key: ${{ secrets.OC_REVIEW_APP_PRIVATE_KEY }}
-
       - name: Resolve pull request context
         id: pr
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
         run: |
           pr_json="$(gh pr view "$EVENT_PR_NUMBER" --json number,url,author,baseRefName,headRefName,headRefOid,headRepositoryOwner,isDraft)"
-          echo "number=$(printf '%s' "$pr_json" | jq -r '.number')" >> "$GITHUB_OUTPUT"
+          {
+            echo "number=$(printf '%s' "$pr_json" | jq -r '.number')"
+            echo "head_sha=$(printf '%s' "$pr_json" | jq -r '.headRefOid')"
+          } >> "$GITHUB_OUTPUT"
 
           if [ "$(printf '%s' "$pr_json" | jq -r '.isDraft')" = "true" ]; then
             echo "draft=true" >> "$GITHUB_OUTPUT"
@@ -59,9 +59,42 @@ jobs:
             echo "author=$(printf '%s' "$pr_json" | jq -r '.author.login')"
             echo "base_ref=$(printf '%s' "$pr_json" | jq -r '.baseRefName')"
             echo "head_ref=$(printf '%s' "$pr_json" | jq -r '.headRefName')"
-            echo "head_sha=$(printf '%s' "$pr_json" | jq -r '.headRefOid')"
             echo "head_repo_owner=$(printf '%s' "$pr_json" | jq -r '.headRepositoryOwner.login')"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Start review check
+        id: review-check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEW_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: |
+          check_run="$(jq -n \
+            --arg head_sha "$REVIEW_HEAD_SHA" \
+            --arg details_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            '{
+              name: "review",
+              head_sha: $head_sha,
+              status: "in_progress",
+              details_url: $details_url,
+              output: {
+                title: "OpenChamber review in progress",
+                summary: "Reviewing the current pull request HEAD."
+              }
+            }')"
+
+          check_id="$(printf '%s' "$check_run" | gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/check-runs" \
+            --input - \
+            --jq '.id')"
+          echo "id=$check_id" >> "$GITHUB_OUTPUT"
+
+      - name: Generate review app token
+        id: app-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ secrets.OC_REVIEW_APP_ID }}
+          private-key: ${{ secrets.OC_REVIEW_APP_PRIVATE_KEY }}
 
       - name: Clear review status for draft
         if: steps.pr.outputs.draft == 'true'
@@ -246,6 +279,7 @@ jobs:
           Required reviewed HEAD: $REVIEW_HEAD_SHA"
 
       - name: Verify and enforce review verdict
+        id: verdict
         if: always() && steps.pr.outputs.draft == 'false' && steps.safety.outputs.safe == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -366,3 +400,84 @@ jobs:
             echo "Review verdict is $verdict; only pass satisfies this check." >&2
             exit 1
           fi
+
+      - name: Publish review check
+        if: always() && steps.review-check.outputs.id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHECK_RUN_ID: ${{ steps.review-check.outputs.id }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          REVIEW_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          DRAFT: ${{ steps.pr.outputs.draft }}
+          VERDICT_OUTCOME: ${{ steps.verdict.outcome }}
+        run: |
+          current_head="$(gh pr view "$PR_NUMBER" --json headRefOid --jq '.headRefOid')"
+          review_label="$(gh pr view "$PR_NUMBER" --json labels --jq '[.labels[].name | select(startswith("review:"))] | first // ""')"
+
+          set_review_status() {
+            local target_label="$1"
+            local remove_args=()
+
+            while IFS= read -r label; do
+              case "$label" in
+                review:*) remove_args+=(--remove-label "$label") ;;
+              esac
+            done < <(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name')
+
+            if [ -n "$target_label" ]; then
+              gh pr edit "$PR_NUMBER" "${remove_args[@]}" --add-label "$target_label"
+            elif [ "${#remove_args[@]}" -gt 0 ]; then
+              gh pr edit "$PR_NUMBER" "${remove_args[@]}"
+            fi
+
+            review_label="$target_label"
+          }
+
+          if [ "$current_head" = "$REVIEW_HEAD_SHA" ]; then
+            if [ "$DRAFT" = "true" ]; then
+              set_review_status ""
+            elif [ "$VERDICT_OUTCOME" != "success" ]; then
+              case "$review_label" in
+                review:needs-evidence|review:blocked|review:human-required|review:automation-failed) ;;
+                *) set_review_status "review:automation-failed" ;;
+              esac
+            fi
+          fi
+
+          if [ "$current_head" != "$REVIEW_HEAD_SHA" ]; then
+            conclusion="cancelled"
+            title="Review superseded by a newer HEAD"
+            summary="The pull request HEAD moved before this review completed."
+          elif [ "$DRAFT" = "true" ]; then
+            conclusion="neutral"
+            title="Review skipped for draft pull request"
+            summary="Mark the pull request ready for review to start the readiness check."
+          elif [ "$VERDICT_OUTCOME" = "success" ] && [ "$review_label" = "review:ready" ]; then
+            conclusion="success"
+            title="OpenChamber review passed"
+            summary="The reviewed HEAD is ready for maintainer review."
+          else
+            conclusion="failure"
+            title="OpenChamber review did not pass"
+            summary="Current readiness state: ${review_label:-review:automation-failed}."
+          fi
+
+          check_run="$(jq -n \
+            --arg conclusion "$conclusion" \
+            --arg title "$title" \
+            --arg summary "$summary" \
+            --arg details_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            '{
+              status: "completed",
+              conclusion: $conclusion,
+              details_url: $details_url,
+              output: {
+                title: $title,
+                summary: $summary
+              }
+            }')"
+
+          printf '%s' "$check_run" | gh api \
+            --method PATCH \
+            "repos/${GITHUB_REPOSITORY}/check-runs/${CHECK_RUN_ID}" \
+            --input - >/dev/null
