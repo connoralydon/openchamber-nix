@@ -90,7 +90,7 @@ let
 
     outputHashAlgo = "sha256";
     outputHashMode = "recursive";
-    outputHash = "sha256-Rggz5gDLoavFlaixOGWXVKLyE/N3BP+XcvLM/nBIkw8=";
+    outputHash = "sha256-KSjL5c8vhqEg/3YnHpggXxk5QztCLiPlNkMgocc/FjQ=";
   };
 
   runtimePath = lib.makeBinPath [
