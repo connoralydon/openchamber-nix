@@ -151,7 +151,10 @@ function isBunInstalled() {
   }
 }
 
-function getPreferredServerRuntime() {
+function getPreferredServerRuntime(env = process.env) {
+  if (env.OPENCHAMBER_SERVER_RUNTIME === 'node') {
+    return 'node';
+  }
   return isBunInstalled() ? 'bun' : 'node';
 }
 
@@ -465,6 +468,7 @@ export {
   maskToken,
   findClosestMatch,
   generateCompletionScript,
+  getPreferredServerRuntime,
   TunnelCliError,
   EXIT_CODE,
   warnIfUnsafeFilePermissions,

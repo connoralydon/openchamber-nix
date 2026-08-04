@@ -37,6 +37,7 @@ import {
   ensureTunnelProfilesMigrated,
   EXIT_CODE,
   generateUiPassword,
+  getPreferredServerRuntime,
   getInstanceFilePath,
   getPidFilePath,
   isOpenchamberCmdline,
@@ -194,6 +195,10 @@ function spawnOpenChamberLikeHungServer(port) {
 }
 
 describe('cli args', () => {
+  it('allows packaged distributions to force the Node server runtime', () => {
+    expect(getPreferredServerRuntime({ OPENCHAMBER_SERVER_RUNTIME: 'node' })).toBe('node');
+  });
+
   it('loads fallback tunnel provider capabilities for CLI startup', () => {
     expect(DEFAULT_TUNNEL_PROVIDER_CAPABILITIES.map((provider) => provider.provider)).toEqual([
       TUNNEL_PROVIDER_CLOUDFLARE,
