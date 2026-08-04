@@ -10,6 +10,7 @@
   nodejs_22,
   openssh,
   python3,
+  sherpa-onnx,
 }:
 
 let
@@ -100,6 +101,7 @@ let
     nodejs_22
     openssh
     python3
+    sherpa-onnx
   ];
 in
 stdenv.mkDerivation {
