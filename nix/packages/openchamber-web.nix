@@ -10,7 +10,6 @@
   nodejs_22,
   openssh,
   python3,
-  sherpa-onnx,
 }:
 
 let
@@ -65,6 +64,15 @@ let
 
       bun install --frozen-lockfile --ignore-scripts
 
+      sherpaPlatformPackages=(
+        node_modules/.bun/sherpa-onnx-linux-x64@*/node_modules/sherpa-onnx-linux-x64
+      )
+      if [ "''${#sherpaPlatformPackages[@]}" -ne 1 ]; then
+        echo "Expected one sherpa-onnx-linux-x64 package, found ''${#sherpaPlatformPackages[@]}" >&2
+        exit 1
+      fi
+      ln -s "''${sherpaPlatformPackages[0]#node_modules/}" node_modules/sherpa-onnx-linux-x64
+
       runHook postBuild
     '';
 
@@ -91,7 +99,7 @@ let
 
     outputHashAlgo = "sha256";
     outputHashMode = "recursive";
-    outputHash = "sha256-PQlo+sVxvcsf4/xQSiz/Enck9m+Fc06KQJkoqiuSUBM=";
+    outputHash = "sha256-QdhoEqzO9Sy3tWXdr6Pu/DJrhg9pGrzhcH3OKXqhs7U=";
   };
 
   runtimePath = lib.makeBinPath [
@@ -101,7 +109,6 @@ let
     nodejs_22
     openssh
     python3
-    sherpa-onnx
   ];
 in
 stdenv.mkDerivation {
@@ -172,8 +179,9 @@ stdenv.mkDerivation {
       cp -R packages/web/node_modules "$appDir/packages/web/node_modules"
     fi
 
-    makeWrapper ${bun}/bin/bun "$out/bin/openchamber" \
+    makeWrapper ${nodejs_22}/bin/node "$out/bin/openchamber" \
       --set NODE_ENV production \
+      --set OPENCHAMBER_SERVER_RUNTIME node \
       --set OPENCHAMBER_DIST_DIR "$appDir/packages/web/dist" \
       --set BUN_BINARY ${bun}/bin/bun \
       --prefix PATH : ${lib.escapeShellArg runtimePath} \
