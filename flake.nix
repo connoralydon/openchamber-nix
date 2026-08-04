@@ -21,7 +21,6 @@
         in
         {
           openchamber-web = pkgs.callPackage ./nix/packages/openchamber-web.nix { };
-          sherpa-onnx = pkgs.sherpa-onnx;
           default = self.packages.${system}.openchamber-web;
         }
       );
