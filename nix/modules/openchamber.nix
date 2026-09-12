@@ -7,8 +7,11 @@
 
 let
   cfg = config.services.openchamber;
+  jsonFormat = pkgs.formats.json { };
 
   openchamberPackage = pkgs.callPackage ../packages/openchamber-web.nix { };
+  settingsEnabled = cfg.settings != { };
+  desiredSettingsFile = jsonFormat.generate "openchamber-managed-settings.json" cfg.settings;
 
   isLoopbackHost =
     host:
@@ -71,6 +74,28 @@ let
       --hostname ${lib.escapeShellArg cfg.opencode.host} \
       --port ${toString cfg.opencode.port}
   '';
+
+  reconcileHost =
+    if
+      builtins.elem cfg.host [
+        "0.0.0.0"
+        "::"
+        "[::]"
+      ]
+    then
+      "127.0.0.1"
+    else if lib.hasInfix ":" cfg.host && !(lib.hasPrefix "[" cfg.host) then
+      "[${cfg.host}]"
+    else
+      cfg.host;
+
+  openchamberEnvironment =
+    commonEnvironment
+    // {
+      OPENCODE_HOST = opencodeUrl;
+      OPENCODE_SKIP_START = "true";
+    }
+    // cfg.extraEnvironment;
 in
 {
   options.services.openchamber = {
@@ -136,6 +161,31 @@ in
       default = null;
       example = "/run/secrets/openchamber-ui-password";
       description = "Path to a one-line plaintext UI password file loaded through systemd credentials.";
+    };
+
+    settings = lib.mkOption {
+      type = lib.types.attrsOf jsonFormat.type;
+      default = { };
+      example = {
+        notificationMode = "always";
+        themeVariant = "dark";
+      };
+      description = ''
+        OpenChamber settings to enforce through the settings API. OpenChamber
+        owns fields that are not present in this attribute set. Values are
+        written to the Nix store and must not contain secrets.
+      '';
+    };
+
+    settingsReconciliation.interval = lib.mkOption {
+      type = lib.types.nullOr lib.types.nonEmptyStr;
+      default = null;
+      example = "2d";
+      description = ''
+        How often to reconcile services.openchamber.settings. The settings are
+        always reconciled once during system startup. Set this to null to
+        disable later runs.
+      '';
     };
 
     environmentFiles = lib.mkOption {
@@ -280,13 +330,7 @@ in
       requires = lib.optional opencodeManaged "openchamber-opencode.service";
 
       path = runtimePackages;
-      environment =
-        commonEnvironment
-        // {
-          OPENCODE_HOST = opencodeUrl;
-          OPENCODE_SKIP_START = "true";
-        }
-        // cfg.extraEnvironment;
+      environment = openchamberEnvironment;
 
       serviceConfig = {
         User = cfg.user;
@@ -295,9 +339,41 @@ in
         ExecStart = startScript;
         EnvironmentFile = cfg.environmentFiles;
         LoadCredential = lib.optional (cfg.passwordFile != null) "ui-password:${cfg.passwordFile}";
-        Restart = "on-failure";
+        Restart = if settingsEnabled then "always" else "on-failure";
         RestartSec = 5;
       };
     };
+
+    systemd.services.openchamber-settings-reconcile = lib.mkIf settingsEnabled {
+      description = "Reconcile declarative OpenChamber settings";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "openchamber.service" ];
+      wants = [ "openchamber.service" ];
+      environment = {
+        OPENCHAMBER_RECONCILE_BASE_URL = "http://${reconcileHost}:${toString cfg.port}";
+        OPENCHAMBER_RECONCILE_DESIRED_SETTINGS_FILE = desiredSettingsFile;
+        OPENCHAMBER_RECONCILE_SETTINGS_FILE = "${openchamberEnvironment.OPENCHAMBER_DATA_DIR}/settings.json";
+      };
+      serviceConfig = {
+        Type = "oneshot";
+        User = cfg.user;
+        Group = cfg.group;
+        WorkingDirectory = cfg.stateDir;
+        ExecStart = "${pkgs.nodejs_22}/bin/node ${./openchamber-settings-reconcile.mjs}";
+        LoadCredential = lib.optional (cfg.passwordFile != null) "ui-password:${cfg.passwordFile}";
+      };
+    };
+
+    systemd.timers.openchamber-settings-reconcile =
+      lib.mkIf (settingsEnabled && cfg.settingsReconciliation.interval != null)
+        {
+          description = "Reconcile declarative OpenChamber settings periodically";
+          wantedBy = [ "timers.target" ];
+          timerConfig = {
+            OnBootSec = cfg.settingsReconciliation.interval;
+            OnUnitActiveSec = cfg.settingsReconciliation.interval;
+            Unit = "openchamber-settings-reconcile.service";
+          };
+        };
   };
 }
