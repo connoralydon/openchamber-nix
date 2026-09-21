@@ -87,6 +87,65 @@ test('authenticates and sends only changed configured keys', async () => {
   assert.equal(update.cookie, 'oc_ui_session=session');
 });
 
+for (const [baseUrl, cookie] of [
+  ['http://127.0.0.1:3210', 'oc_ui_session_3210=session'],
+  ['http://[::1]:3000', 'oc_ui_session_3000=session'],
+  ['http://localhost', 'oc_ui_session=session'],
+]) {
+  test(`authenticates at ${baseUrl} with the matching session cookie`, async () => {
+    const fetchImpl = async (url, options = {}) => {
+      const path = new URL(url).pathname;
+      if (path === '/health') return jsonResponse(readyHealth);
+      if (path === '/auth/session') {
+        const response = jsonResponse({ ok: true }, { headers: { 'Set-Cookie': 'unrelated=value; Path=/' } });
+        response.headers.append('Set-Cookie', `${cookie}; Path=/; HttpOnly`);
+        return response;
+      }
+      assert.equal(path, '/api/config/settings');
+      assert.equal(options.headers.Cookie, cookie);
+      return jsonResponse({ themeVariant: 'dark' });
+    };
+
+    const result = await reconcileSettings({
+      baseUrl,
+      desiredSettings: { themeVariant: 'dark' },
+      password: 'secret',
+      settingsFilePath: '/state/settings.json',
+      fetchImpl,
+      readFileImpl: persistedSettings,
+      sleepImpl: noSleep,
+      log: () => {},
+    });
+
+    assert.deepEqual(result, { changedKeys: [], restarted: false });
+  });
+}
+
+for (const cookie of [null, 'unrelated=session', 'oc_ui_session_3001=session', 'oc_ui_session_extra=session']) {
+  test(`rejects authentication without a matching session cookie: ${cookie}`, async () => {
+    const fetchImpl = async (url) => {
+      const path = new URL(url).pathname;
+      if (path === '/health') return jsonResponse(readyHealth);
+      assert.equal(path, '/auth/session');
+      return jsonResponse({ ok: true }, { headers: cookie ? { 'Set-Cookie': `${cookie}; Path=/` } : {} });
+    };
+
+    await assert.rejects(
+      reconcileSettings({
+        baseUrl: 'http://127.0.0.1:3000',
+        desiredSettings: { themeVariant: 'dark' },
+        password: 'secret',
+        settingsFilePath: '/state/settings.json',
+        fetchImpl,
+        readFileImpl: persistedSettings,
+        sleepImpl: noSleep,
+        log: () => {},
+      }),
+      /OpenChamber authentication did not return a session cookie/,
+    );
+  });
+}
+
 test('does not restart when the server rejects a value', async () => {
   let shutdownRequests = 0;
   const fetchImpl = async (url, options = {}) => {
@@ -129,9 +188,10 @@ test('restarts once when a successful update is not visible to a new read', asyn
       authenticatedSessions += 1;
       return jsonResponse(
         { ok: true },
-        { headers: { 'Set-Cookie': `oc_ui_session=session-${authenticatedSessions}; Path=/` } },
+        { headers: { 'Set-Cookie': `oc_ui_session_3000=session-${authenticatedSessions}; Path=/` } },
       );
     }
+    assert.equal(options.headers.Cookie, `oc_ui_session_3000=session-${authenticatedSessions}`);
     if (path === '/api/system/shutdown') {
       shutdownRequests += 1;
       return jsonResponse({ ok: true });
