@@ -99,7 +99,7 @@ let
 
     outputHashAlgo = "sha256";
     outputHashMode = "recursive";
-    outputHash = "sha256-oofUVxf0wtMj9N79yggIdysD4FlkMLnRRopPTog4+Bc=";
+    outputHash = "sha256-gEkdhObQI6pYDdqD0KYfQGd594Iw1HZJfmAw72JoS5E=";
   };
 
   runtimePath = lib.makeBinPath [
@@ -151,6 +151,7 @@ stdenv.mkDerivation {
     export HOME="$TMPDIR/home"
     mkdir -p "$HOME"
 
+    bun run --cwd packages/sdk build
     bun run build:web
 
     runHook postBuild
@@ -160,7 +161,7 @@ stdenv.mkDerivation {
     runHook preInstall
 
     appDir="$out/share/openchamber"
-    mkdir -p "$appDir/packages/web" "$out/bin"
+    mkdir -p "$appDir/packages/sdk" "$appDir/packages/web" "$out/bin"
 
     cp package.json "$appDir/package.json"
     cp -R node_modules "$appDir/node_modules"
@@ -171,6 +172,9 @@ stdenv.mkDerivation {
     done
 
     cp packages/web/package.json "$appDir/packages/web/package.json"
+    cp packages/sdk/package.json "$appDir/packages/sdk/package.json"
+    cp -R packages/sdk/dist "$appDir/packages/sdk/dist"
+    cp -R packages/sdk/scripts "$appDir/packages/sdk/scripts"
     cp -R packages/web/bin "$appDir/packages/web/bin"
     cp -R packages/web/server "$appDir/packages/web/server"
     cp -R packages/web/dist "$appDir/packages/web/dist"
