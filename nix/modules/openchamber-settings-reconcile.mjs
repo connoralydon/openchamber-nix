@@ -89,10 +89,11 @@ const sessionCookie = async (fetchImpl, baseUrl, password) => {
     body: JSON.stringify({ password }),
   });
   const setCookies = response.headers.getSetCookie?.() ?? [response.headers.get('set-cookie')];
+  const { port } = new URL(baseUrl);
   const cookie = setCookies
     .filter(Boolean)
     .map((value) => value.split(';', 1)[0])
-    .find((value) => value.startsWith('oc_ui_session='));
+    .find((value) => value.startsWith('oc_ui_session=') || (port && value.startsWith(`oc_ui_session_${port}=`)));
   if (!cookie) {
     throw new Error('OpenChamber authentication did not return a session cookie');
   }
