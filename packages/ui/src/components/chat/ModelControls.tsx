@@ -2305,10 +2305,10 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                                 onClick={() => handleAgentChange(agent.name)}
                             >
                                 <div className="flex items-center gap-2">
-                                    <div className={cn('size-2.5 rounded-full flex-shrink-0 agent-dot', agentColor.class)} />
+                                    <div className={cn('size-2.5 rounded-full flex-shrink-0 agent-dot', agentColor.class)} style={{ backgroundColor: agentColor.color }} />
                                     <span
                                         className="typography-ui-label font-semibold"
-                                        style={isSelected ? { color: `var(${agentColor.var})` } : undefined}
+                                        style={isSelected ? { color: agentColor.color } : undefined}
                                     >
                                         {agentLabel(agent)}
                                     </span>
@@ -2988,7 +2988,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                                                         'flex-shrink-0',
                                                         uiAgentName ? '' : 'text-muted-foreground'
                                                     )}
-                                                    style={uiAgentName ? { color: `var(${getAgentColor(uiAgentName).var})` } : undefined}
+                                                    style={uiAgentName ? { color: getAgentColor(uiAgentName).color } : undefined}
                                                 />
                                                 <span
                                                     className={cn(
@@ -2997,7 +2997,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                                                         'font-medium min-w-0 truncate',
                                                         isDesktop ? 'max-w-[220px]' : undefined
                                                     )}
-                                                    style={uiAgentName ? { color: `var(${getAgentColor(uiAgentName).var})` } : undefined}
+                                                    style={uiAgentName ? { color: getAgentColor(uiAgentName).color } : undefined}
                                                 >
                                                     {getAgentDisplayName()}
                                                 </span>
@@ -3053,7 +3053,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                                                             <div className={cn(
                                                                 'h-1 w-1 rounded-full agent-dot',
                                                                 getAgentColor(agent.name).class
-                                                            )} />
+                                                            )} style={{ backgroundColor: getAgentColor(agent.name).color }} />
                                                             <span className="font-medium">{agentLabel(agent)}</span>
                                                         </div>
                                                     </DropdownMenuItem>
@@ -3110,7 +3110,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                                 'flex-shrink-0',
                                 uiAgentName ? '' : 'text-muted-foreground'
                             )}
-                            style={uiAgentName ? { color: `var(${getAgentColor(uiAgentName).var})` } : undefined}
+                            style={uiAgentName ? { color: getAgentColor(uiAgentName).color } : undefined}
                         />
                         <span
                             className={cn(
@@ -3119,7 +3119,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                                 'font-medium truncate min-w-0',
                                 isMobile && 'max-w-[60px]'
                             )}
-                            style={uiAgentName ? { color: `var(${getAgentColor(uiAgentName).var})` } : undefined}
+                            style={uiAgentName ? { color: getAgentColor(uiAgentName).color } : undefined}
                         >
                             {getAgentDisplayName()}
                         </span>

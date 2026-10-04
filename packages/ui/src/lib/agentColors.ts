@@ -2,7 +2,7 @@ import type { Agent } from '@/lib/opencode/model';
 import type { Theme } from '@/types/theme';
 import { chromaticDistance, contrastRatio } from './theme/color';
 
-const BUILD_COLOR = { var: '--status-success', class: 'agent-success' } as const;
+const BUILD_COLOR = { var: '--status-success', class: 'agent-success', color: 'var(--status-success)' };
 const SYNTAX_COLORS = [
   { key: 'keyword', var: '--syntax-keyword', class: 'agent-keyword' },
   { key: 'type', var: '--syntax-type', class: 'agent-type' },
@@ -13,7 +13,7 @@ const SYNTAX_COLORS = [
   { key: 'variable', var: '--syntax-variable', class: 'agent-variable' },
 ] as const;
 const MIN_SEPARATION = 0.055;
-type AgentColor = typeof BUILD_COLOR | (typeof SYNTAX_COLORS)[number];
+type AgentColor = { var: string; class: string; color: string };
 
 function hashName(name: string): number {
   let hash = 0;
@@ -22,13 +22,13 @@ function hashName(name: string): number {
 }
 
 /** Allocate against the complete visible roster, never a filtered picker list.
- * Build owns success; other agents exhaust distinct syntax colors before reuse. */
-export function createAgentColorResolver(theme: Theme, agents: readonly (Pick<Agent, 'name'> & Partial<Pick<Agent, 'mode'>>)[]) {
+ * OpenCode colors override the theme allocation without changing other agents' fallbacks. */
+export function createAgentColorResolver(theme: Theme, agents: readonly (Pick<Agent, 'name'> & Partial<Pick<Agent, 'mode' | 'color'>>)[]) {
   const { surface, syntax, status } = theme.colors;
   const backgrounds = [surface.background, surface.muted, surface.elevated];
   const distance = (a: string, b: string) => Math.min(...backgrounds.map((background) =>
     chromaticDistance(a, b, background, surface.background) ?? (a === b ? 0 : 1)));
-  const candidates = SYNTAX_COLORS.map((color) => ({ ...color, value: syntax.base[color.key] }));
+  const candidates = SYNTAX_COLORS.map((color) => ({ ...color, color: `var(${color.var})`, value: syntax.base[color.key] }));
   const visible = candidates.filter((color) => backgrounds.every((background) =>
     (contrastRatio(color.value, background, surface.background) ?? 1.5) >= 1.5));
   const remaining = [...(visible.length ? visible : candidates)];
@@ -65,8 +65,14 @@ export function createAgentColorResolver(theme: Theme, agents: readonly (Pick<Ag
     assigned.set(agent.name, palette[index]);
     used.add(index);
   }
+  for (const agent of ordered) {
+    // OpenCode's agent color contract is a six-digit hex value.
+    if (!agent.color || !/^#[\da-f]{6}$/i.test(agent.color)) continue;
+    const fallback = agent.name === 'build' ? BUILD_COLOR : assigned.get(agent.name);
+    if (fallback) assigned.set(agent.name, { ...fallback, color: agent.color });
+  }
   return (name: string | undefined) => {
-    if (!name || name === 'build') return BUILD_COLOR;
-    return assigned.get(name) ?? palette[hashName(name) % palette.length];
+    if (!name) return BUILD_COLOR;
+    return assigned.get(name) ?? (name === 'build' ? BUILD_COLOR : palette[hashName(name) % palette.length]);
   };
 }

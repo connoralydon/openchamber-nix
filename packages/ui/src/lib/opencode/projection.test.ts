@@ -325,11 +325,12 @@ describe("deniesAnyProvider", () => {
 })
 
 describe("projectAgent", () => {
-  test("keys the agent by its wire id and keeps the wire name for display", () => {
+  test("keys the agent by its wire id and keeps its display name and configured color", () => {
     const agent = projectAgent({
       id: "build",
       name: "Build",
       mode: "primary",
+      color: "#ff6b6b",
       hidden: false,
       request: { settings: {}, headers: {}, body: {} },
       permissions: [],
@@ -338,5 +339,6 @@ describe("projectAgent", () => {
     expect(agent.name).toBe("build")
     expect(agent.displayName).toBe("Build")
     expect(agent.id).toBe("build")
+    expect(agent.color).toBe("#ff6b6b")
   })
 })

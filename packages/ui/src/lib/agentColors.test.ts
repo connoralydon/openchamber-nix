@@ -18,7 +18,7 @@ test('Build keeps success and four visible agents get distinct Monokai colors', 
     const theme = getThemeById(id);
     if (!theme) throw new Error(`Missing theme ${id}`);
     const resolve = createAgentColorResolver(theme, roster);
-    expect(resolve('build')).toEqual({ var: '--status-success', class: 'agent-success' });
+    expect(resolve('build')).toEqual({ var: '--status-success', class: 'agent-success', color: 'var(--status-success)' });
     expect(new Set(roster.map(({ name }) => colorValue(theme, resolve(name).var))).size).toBe(4);
     const resolved = roster.map(({ name }) => colorValue(theme, resolve(name).var));
     for (let i = 0; i < resolved.length; i++) {
@@ -74,4 +74,52 @@ test('sparse palettes reuse syntax colors without borrowing new status colors', 
     expect(colorValue(theme, resolve(name).var)).toBe('#dddddd');
   }
   expect(resolve('build').var).toBe('--status-success');
+});
+
+test('configured OpenCode colors take precedence, including Build and subagents', () => {
+  const agents = [
+    { name: 'build', color: '#123456' },
+    { name: 'plan', color: '#ABCDEF' },
+    { name: 'ask', color: '#ff6b6b' },
+    { name: 'yolo', color: '#000000' },
+    { name: 'goal', color: '#ffffff' },
+    { name: 'helper', mode: 'subagent', color: '#654321' },
+  ] satisfies Parameters<typeof createAgentColorResolver>[1];
+  for (const dark of [true, false]) {
+    const theme = getDefaultTheme(dark);
+    for (const roster of [agents, [...agents].reverse()]) {
+      const fallback = createAgentColorResolver(theme, roster.map(({ name, mode }) => ({ name, mode })));
+      const resolve = createAgentColorResolver(theme, roster);
+      for (const { name, color } of agents) {
+        expect(resolve(name)).toMatchObject({ color });
+        expect(resolve(name)).toBe(resolve(name));
+        expect(resolve(name).var).toBe(fallback(name).var);
+        expect(resolve(name).class).toBe(fallback(name).class);
+      }
+    }
+  }
+});
+
+test('missing and invalid configured colors keep the existing theme fallbacks', () => {
+  const theme = getDefaultTheme(true);
+  const fallback = createAgentColorResolver(theme, roster);
+  for (const color of [undefined, '', '#123', '#12345', '#12345678', '#gg0000', 'red', 'var(--primary)', ' #123456 ']) {
+    const resolve = createAgentColorResolver(theme, roster.map((agent) => ({ ...agent, color })));
+    for (const { name } of roster) expect(resolve(name)).toEqual(fallback(name));
+    expect(resolve(undefined)).toEqual(fallback(undefined));
+    expect(resolve('removed-agent')).toEqual(fallback('removed-agent'));
+  }
+});
+
+test('configured colors leave unconfigured agents and historical names on their theme fallback', () => {
+  const theme = getDefaultTheme(true);
+  const fallback = createAgentColorResolver(theme, roster);
+  const resolve = createAgentColorResolver(theme, roster.map((agent) => ({
+    ...agent, color: agent.name === 'plan' ? '#123456' : undefined,
+  })));
+  expect(resolve('plan')).toMatchObject({ color: '#123456' });
+  for (const name of ['build', 'architect', 'simplifier', 'removed-agent', undefined]) {
+    expect(resolve(name)).toEqual(fallback(name));
+  }
+  expect(createAgentColorResolver(theme, [])('build')).toEqual(fallback('build'));
 });
