@@ -124,6 +124,11 @@ openchamber update
 
 OpenChamber binds to localhost by default. Use `--lan` only on a trusted network and protect browser access with `--ui-password`.
 
+### NixOS
+
+This fork provides a native package and NixOS module. See the [NixOS guide](nix/README.md)
+for declarative settings and transcription-key files.
+
 ## Guides
 
 Go deeper with the OpenChamber guides:

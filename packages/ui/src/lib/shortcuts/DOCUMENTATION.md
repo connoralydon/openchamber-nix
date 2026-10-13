@@ -47,7 +47,11 @@ The settings recorder captures up to two chords with at most three simultaneous 
 
 Shared `DropdownMenu` and `Select` can opt into this boundary with `disableGlobalShortcuts`; they suspend while open for both controlled and uncontrolled popups and resume on close or unmount. Exact `Ctrl+N` and `Ctrl+P` chords are translated to menu navigation even when the native event reports IME composition; no other composing key is intercepted. Window capture stops an IME Escape before Base UI's document-level dismiss listener without preventing the native IME action. Controlled draft project and worktree pickers close on non-IME Escape from either the trigger or portaled popup.
 
-Terminal capture, Escape abort priming, and the shifted reverse-agent chord are input-boundary exceptions. They preserve their target-specific semantics and invoke the registered application handler rather than duplicating command behavior.
+Terminal capture, variant capture, Escape abort priming, and the shifted reverse-agent chord are input-boundary exceptions. They preserve their target-specific semantics and invoke the registered application handler rather than duplicating command behavior.
+
+Terminal capture uses a separate dispatcher restricted to terminal toggle and expansion. Both single chords and sequences work while terminal input has focus. Accepted shortcut keys stop before terminal input; unrelated keys retain native input. Its prefix clears on window blur, a different input target, or application shortcut suspension. Other application commands remain unavailable from terminal input.
+
+Variant cycling is customizable. Main and Mini Chat dispatch its single-chord binding through `dispatchBeforeInput` during window capture. This prevents an accepted Control+T shortcut from also transposing composer text on macOS. The dispatcher leaves native editing available when the handler declines, during IME composition, on key repeat, while handlers are suspended, or while a sequence prefix is active. Two-chord variant bindings use the normal sequence route.
 
 Escape abort priming listens in the window bubble phase and only counts an Escape whose target is a chat composer editor (`[data-chat-input="true"]`) and that nothing prevented first. Escape from anywhere else, an Escape the composer spent on its own state (a picker, shell mode, the expanded input, a selection), IME composition, an open dropdown, or an open overlay clears the priming. `[data-btw-composer="true"]` owns Escape instead of main-session abort priming.
 
