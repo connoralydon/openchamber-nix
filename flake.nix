@@ -82,10 +82,60 @@
               }
             ];
           };
+          keybindPreset = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.openchamber
+              {
+                system.stateVersion = "25.11";
+                services.openchamber = {
+                  enable = true;
+                  package = testPackage;
+                  createUser = false;
+                  keybindPreset = "opencode";
+                  opencode.enable = false;
+                };
+              }
+            ];
+          };
+          keybindOverrides = keybindPreset.extendModules {
+            modules = [
+              {
+                services.openchamber.settings = {
+                  themeVariant = "dark";
+                  shortcutOverrides = {
+                    open_model_selector = "mod+x s";
+                    focus_input = "mod+i";
+                  };
+                };
+              }
+            ];
+          };
           reconcileService = configured.config.systemd.services.openchamber-settings-reconcile;
           reconcileTimer = configured.config.systemd.timers.openchamber-settings-reconcile;
         in
         {
+          openchamber-keybind-preset =
+            let
+              shortcuts = keybindPreset.config.services.openchamber.settings.shortcutOverrides;
+              overrides = keybindOverrides.config.services.openchamber.settings;
+            in
+            assert !(unconfigured.config.services.openchamber.settings ? shortcutOverrides);
+            assert builtins.length (builtins.attrNames shortcuts) == 10;
+            assert shortcuts.open_command_palette == "mod+p";
+            assert shortcuts.open_model_selector == "mod+x m";
+            assert shortcuts.cycle_agent == "tab";
+            assert shortcuts.cycle_thinking_variant == "ctrl+t";
+            assert !(shortcuts ? cycle_favorite_model_forward);
+            assert keybindPreset.config.systemd.services ? openchamber-settings-reconcile;
+            assert
+              overrides.shortcutOverrides == shortcuts
+              // {
+                open_model_selector = "mod+x s";
+                focus_input = "mod+i";
+              };
+            assert overrides.themeVariant == "dark";
+            pkgs.writeText "openchamber-keybind-preset-test" (builtins.toJSON shortcuts);
           openchamber-settings-reconcile =
             assert reconcileService.serviceConfig.User == "nobody";
             assert

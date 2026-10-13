@@ -82,6 +82,16 @@ export class ShortcutDispatcher {
     return false;
   }
 
+  dispatchBeforeInput(actionId: ShortcutActionId, event: KeyboardEvent): boolean {
+    if (event.repeat || isIMECompositionEvent(event) || this.hasActivePrefix() || this.options.registry.isSuspended()) {
+      return false;
+    }
+    const handler = this.options.registry.get(actionId);
+    return Boolean(handler
+      && eventMatchesShortcut(event, this.options.getBinding(actionId))
+      && handler(event) !== false);
+  }
+
   clear(): void {
     this.prefix = undefined;
     this.prefixTarget = null;

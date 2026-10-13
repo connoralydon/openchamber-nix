@@ -5,6 +5,23 @@ Use `services.openchamber.settings` for non-secret settings. The module applies
 those fields through OpenChamber's settings API and preserves other fields.
 Never put credentials in `settings`, because Nix writes these values to the store.
 
+## OpenCode shortcuts
+
+Set `services.openchamber.keybindPreset = "opencode"` to match shared OpenCode
+actions. The preset uses Command+X as the leader on macOS and Control+X on
+other platforms. The command palette keeps the platform's primary modifier
+with P. Model cycling and OpenChamber-only shortcuts stay unchanged.
+
+Override individual bindings through `services.openchamber.settings.shortcutOverrides`.
+Explicit entries take precedence over the preset. Browsers and editors can reserve
+keys such as Control+T; choose another binding when the client cannot receive it.
+Inspect the active bindings in Settings or the help dialog.
+
+Nix manages the complete `shortcutOverrides` map. Declare existing custom
+bindings there before enabling the preset. The module applies the map at startup
+and at the configured reconciliation interval. Removing the preset stops
+management but leaves saved bindings in place until they are reset in Settings.
+
 ## Preset the transcription key
 
 Set `services.openchamber.sttApiKeyFile` to the path of a one-line runtime key file.
