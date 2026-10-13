@@ -13,19 +13,6 @@ let
   settingsEnabled = cfg.settings != { } || cfg.sttApiKeyFile != null;
   desiredSettingsFile = jsonFormat.generate "openchamber-managed-settings.json" cfg.settings;
 
-  opencodeKeybinds = {
-    open_command_palette = "mod+p";
-    open_model_selector = "mod+x m";
-    cycle_agent = "tab";
-    cycle_thinking_variant = "ctrl+t";
-    new_chat = "mod+x n";
-    open_session_list = "mod+x l";
-    open_timeline_dialog = "mod+x g";
-    toggle_sidebar = "mod+x b";
-    toggle_terminal = "mod+x t";
-    close_session_tab = "mod+x w";
-  };
-
   isLoopbackHost =
     host:
     builtins.elem host [
@@ -201,18 +188,6 @@ in
       '';
     };
 
-    keybindPreset = lib.mkOption {
-      type = lib.types.nullOr (lib.types.enum [ "opencode" ]);
-      default = null;
-      example = "opencode";
-      description = ''
-        Optional shortcut preset for shared OpenCode actions. The opencode
-        preset uses Command-X on macOS and Control-X elsewhere as its leader,
-        and keeps Command-P or Control-P for the command palette. Explicit
-        settings.shortcutOverrides entries take precedence over the preset.
-      '';
-    };
-
     sttApiKeyFile = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
@@ -307,10 +282,6 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    services.openchamber.settings.shortcutOverrides = lib.mkIf (cfg.keybindPreset == "opencode") (
-      lib.mapAttrs (_: lib.mkDefault) opencodeKeybinds
-    );
-
     warnings = lib.optional (!isLoopbackHost cfg.host && cfg.passwordFile == null) (
       "services.openchamber binds to ${cfg.host} without services.openchamber.passwordFile; "
       + "the browser UI will be exposed without password protection."
