@@ -22,6 +22,8 @@ concurrency:
 
 jobs:
   rehash:
+    # This fork maintains its wrapper hash in nix/packages/openchamber-web.nix.
+    if: github.repository == 'openchamber/openchamber'
     runs-on: ubuntu-latest
     steps:
       # No persisted GITHUB_TOKEN: the only push here goes through the app

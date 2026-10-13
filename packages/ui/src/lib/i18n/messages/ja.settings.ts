@@ -1374,6 +1374,7 @@ export const settingsDict = {
   'settings.openchamber.keyboardShortcuts.action.toggle_services_menu.label': 'サービスメニューの切替',
   'settings.openchamber.keyboardShortcuts.action.cycle_theme.label': 'テーマを順に切替',
   'settings.openchamber.keyboardShortcuts.action.cycle_agent.label': 'Agent を順に切替',
+  'settings.openchamber.keyboardShortcuts.action.cycle_thinking_variant.label': '思考バリアントを順に切替',
   'settings.openchamber.keyboardShortcuts.action.cycle_favorite_model_forward.label': 'お気に入りモデルを次へ',
   'settings.openchamber.keyboardShortcuts.action.cycle_favorite_model_backward.label': 'お気に入りモデルを前へ',
   'settings.openchamber.keyboardShortcuts.action.expand_input.label': '入力を拡大',

@@ -81,6 +81,7 @@ export const useKeyboardShortcuts = () => {
   const abortPrimedTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const themeModeRef = React.useRef(themeMode);
   const dispatcherRef = React.useRef<ShortcutDispatcher | null>(null);
+  const terminalDispatcherRef = React.useRef<ShortcutDispatcher | null>(null);
   const selectionToolbarDispatcherRef = React.useRef<ShortcutDispatcher | null>(null);
   const selectionToolbarVersionRef = React.useRef(-1);
   const heldKeysRef = React.useRef<Set<string>>(new Set());
@@ -98,6 +99,15 @@ export const useKeyboardShortcuts = () => {
     });
   }
   const dispatcher = dispatcherRef.current;
+  if (!terminalDispatcherRef.current) {
+    terminalDispatcherRef.current = new ShortcutDispatcher({
+      registry: shortcutRegistry,
+      getBinding: (actionId) => actionId === 'toggle_terminal' || actionId === 'toggle_terminal_expanded'
+        ? getEffectiveShortcutCombo(actionId, useUIStore.getState().shortcutOverrides)
+        : '',
+    });
+  }
+  const terminalDispatcher = terminalDispatcherRef.current;
   if (!selectionToolbarDispatcherRef.current) {
     const registry = new ShortcutRegistry();
     registry.register('add_selection_to_chat', invokeActiveSelectionAddToChat);
@@ -386,14 +396,25 @@ export const useKeyboardShortcuts = () => {
       return handler ? handler(event) !== false : false;
     };
     const handleTerminalShortcutCapture = (event: KeyboardEvent) => {
-      if (!isTerminalEventTarget(event.target)) return;
-      const getBinding = (actionId: ShortcutActionId) => getEffectiveShortcutCombo(
-        actionId,
-        useUIStore.getState().shortcutOverrides,
-      );
-      const actionId = eventMatchesShortcut(event, getBinding('toggle_terminal')) ? 'toggle_terminal'
-        : eventMatchesShortcut(event, getBinding('toggle_terminal_expanded')) ? 'toggle_terminal_expanded' : null;
-      if (actionId && invokeRegistered(actionId, event)) {
+      if (!isTerminalEventTarget(event.target) || hasActiveSelectionToolbar()) {
+        terminalDispatcher.clear();
+        return;
+      }
+      dispatcher.clear();
+      if (terminalDispatcher.hasActivePrefix() && terminalDispatcher.getActivePrefixTarget() !== event.target) {
+        terminalDispatcher.clear();
+      }
+      const handled = terminalDispatcher.hasActivePrefix()
+        ? terminalDispatcher.dispatchActivePrefix(event)
+        : terminalDispatcher.dispatch(event);
+      if (handled) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    const handleVariantShortcutCapture = (event: KeyboardEvent) => {
+      if (isTerminalEventTarget(event.target) || hasActiveSelectionToolbar()) return;
+      if (dispatcher.dispatchBeforeInput('cycle_thinking_variant', event)) {
         event.preventDefault();
         event.stopPropagation();
       }
@@ -629,12 +650,14 @@ export const useKeyboardShortcuts = () => {
     const handleBlur = () => {
       heldKeysRef.current.clear();
       dispatcher.handleBlur();
+      terminalDispatcher.handleBlur();
       selectionToolbarDispatcher.handleBlur();
     };
     window.addEventListener('keydown', handleKeyHoldDown, true);
     window.addEventListener('keydown', handleSelectionToolbarKeyDownCapture, true);
     window.addEventListener('keyup', handleKeyUp, true);
     window.addEventListener('keydown', handleTerminalShortcutCapture, true);
+    window.addEventListener('keydown', handleVariantShortcutCapture, true);
     window.addEventListener('keydown', handleEscapeKeyDownCapture, true);
     window.addEventListener('keydown', handleActivePrefixKeyDownCapture, true);
     window.addEventListener('keydown', handleKeyDown);
@@ -654,13 +677,14 @@ export const useKeyboardShortcuts = () => {
       window.removeEventListener('keydown', handleSelectionToolbarKeyDownCapture, true);
       window.removeEventListener('keyup', handleKeyUp, true);
       window.removeEventListener('keydown', handleTerminalShortcutCapture, true);
+      window.removeEventListener('keydown', handleVariantShortcutCapture, true);
       window.removeEventListener('keydown', handleEscapeKeyDownCapture, true);
       window.removeEventListener('keydown', handleActivePrefixKeyDownCapture, true);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keydown', handleAbortEscapeKeyDown);
       window.removeEventListener('blur', handleBlur);
     };
-  }, [armAbortPrompt, currentSessionId, dispatcher, effectiveDirectory, inputRedirect, resetAbortPriming, selectionToolbarDispatcher, sessionPhase]);
+  }, [armAbortPrompt, currentSessionId, dispatcher, effectiveDirectory, inputRedirect, resetAbortPriming, selectionToolbarDispatcher, sessionPhase, terminalDispatcher]);
 
   React.useEffect(() => () => resetAbortPriming(), [resetAbortPriming]);
 };

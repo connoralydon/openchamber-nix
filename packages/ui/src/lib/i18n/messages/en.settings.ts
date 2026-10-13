@@ -1373,6 +1373,7 @@ export const settingsDict = {
   'settings.openchamber.keyboardShortcuts.action.toggle_services_menu.label': 'Toggle services menu',
   'settings.openchamber.keyboardShortcuts.action.cycle_theme.label': 'Cycle theme',
   'settings.openchamber.keyboardShortcuts.action.cycle_agent.label': 'Cycle agent',
+  'settings.openchamber.keyboardShortcuts.action.cycle_thinking_variant.label': 'Cycle thinking variant',
   'settings.openchamber.keyboardShortcuts.action.cycle_favorite_model_forward.label': 'Cycle favorite model forward',
   'settings.openchamber.keyboardShortcuts.action.cycle_favorite_model_backward.label': 'Cycle favorite model backward',
   'settings.openchamber.keyboardShortcuts.action.open_model_selector.label': 'Open model selector',

@@ -1374,6 +1374,7 @@ export const settingsDict = {
   'settings.openchamber.keyboardShortcuts.action.toggle_services_menu.label': 'Services-menu in-/uitschakelen',
   'settings.openchamber.keyboardShortcuts.action.cycle_theme.label': 'Thema doorlopen',
   'settings.openchamber.keyboardShortcuts.action.cycle_agent.label': 'Agent doorlopen',
+  'settings.openchamber.keyboardShortcuts.action.cycle_thinking_variant.label': 'Denkvariant doorlopen',
   'settings.openchamber.keyboardShortcuts.action.cycle_favorite_model_forward.label': 'Favoriet model vooruit doorlopen',
   'settings.openchamber.keyboardShortcuts.action.cycle_favorite_model_backward.label': 'Favoriet model achteruit doorlopen',
   'settings.openchamber.keyboardShortcuts.action.open_model_selector.label': 'Modelkiezer openen',

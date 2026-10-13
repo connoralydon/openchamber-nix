@@ -1247,6 +1247,7 @@ export const settingsDict = {
   'settings.openchamber.keyboardShortcuts.action.toggle_services_menu.label': 'Afficher/masquer le menu des services',
   'settings.openchamber.keyboardShortcuts.action.cycle_theme.label': 'Changer de thème',
   'settings.openchamber.keyboardShortcuts.action.cycle_agent.label': 'Changer d’agent',
+  'settings.openchamber.keyboardShortcuts.action.cycle_thinking_variant.label': 'Changer de variante de réflexion',
   'settings.openchamber.keyboardShortcuts.action.cycle_favorite_model_forward.label': 'Faire avancer le modèle favori',
   'settings.openchamber.keyboardShortcuts.action.cycle_favorite_model_backward.label': 'Faire défiler le modèle favori vers l\'arrière',
   'settings.openchamber.keyboardShortcuts.action.open_model_selector.label': 'Ouvrir le sélecteur de modèle',

@@ -173,7 +173,13 @@ const SHORTCUT_GROUPS = {
       settingsLabelKey:
         'settings.openchamber.keyboardShortcuts.action.open_model_selector.label',
     },
-    { id: 'cycle_thinking_variant', defaultBinding: 'mod+shift+t', customizable: false },
+    {
+      id: 'cycle_thinking_variant',
+      defaultBinding: 'mod+shift+t',
+      customizable: true,
+      settingsLabelKey:
+        'settings.openchamber.keyboardShortcuts.action.cycle_thinking_variant.label',
+    },
     {
       id: 'cycle_agent',
       defaultBinding: 'tab',

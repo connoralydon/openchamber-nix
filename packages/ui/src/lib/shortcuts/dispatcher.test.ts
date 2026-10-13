@@ -17,6 +17,45 @@ function key(key: string, options: Partial<KeyboardEvent> = {}): KeyboardEvent {
 }
 
 describe('ShortcutDispatcher', () => {
+  test('dispatches an accepted single variant chord before input, with normal dispatch guards', () => {
+    const registry = new ShortcutRegistry();
+    let accepted = true;
+    let calls = 0;
+    registry.register('cycle_thinking_variant', () => { calls++; return accepted; });
+    registry.register('open_model_selector', () => {});
+    const dispatcher = new ShortcutDispatcher({
+      registry,
+      getBinding: (id) => id === 'cycle_thinking_variant' ? 'ctrl+t' : 'mod+x m',
+    });
+    const variant = key('t', { ctrlKey: true });
+    expect(dispatcher.dispatchBeforeInput('cycle_thinking_variant', variant)).toBe(true);
+    expect(calls).toBe(1);
+    expect(dispatcher.dispatchBeforeInput('cycle_thinking_variant', key('t', { ctrlKey: true, repeat: true }))).toBe(false);
+    expect(dispatcher.dispatchBeforeInput('cycle_thinking_variant', key('t', { ctrlKey: true, isComposing: true }))).toBe(false);
+    const resume = registry.suspend();
+    expect(dispatcher.dispatchBeforeInput('cycle_thinking_variant', variant)).toBe(false);
+    resume();
+    dispatcher.dispatch(key('x', { ctrlKey: true }));
+    expect(dispatcher.dispatchBeforeInput('cycle_thinking_variant', variant)).toBe(false);
+    expect(calls).toBe(1);
+    dispatcher.clear();
+    accepted = false;
+    expect(dispatcher.dispatchBeforeInput('cycle_thinking_variant', variant)).toBe(false);
+    expect(calls).toBe(2);
+  });
+
+  test('leaves two-chord variant bindings for normal sequence dispatch', () => {
+    const registry = new ShortcutRegistry();
+    let calls = 0;
+    registry.register('cycle_thinking_variant', () => { calls++; });
+    const dispatcher = new ShortcutDispatcher({ registry, getBinding: () => 'mod+x v' });
+    const leader = key('x', { ctrlKey: true });
+    expect(dispatcher.dispatchBeforeInput('cycle_thinking_variant', leader)).toBe(false);
+    expect(dispatcher.dispatch(leader)).toBe(true);
+    expect(dispatcher.dispatchActivePrefix(key('v'))).toBe(true);
+    expect(calls).toBe(1);
+  });
+
   test('dispatches a sequence and consumes only leaders with active handlers', () => {
     const registry = new ShortcutRegistry();
     const calls: string[] = [];

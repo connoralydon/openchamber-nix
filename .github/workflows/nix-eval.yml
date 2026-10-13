@@ -28,9 +28,6 @@ jobs:
 
       - name: Evaluate the flake's outputs
         run: |
-          nix eval --raw .#openchamber.drvPath
-          nix eval --raw .#openchamber-desktop.drvPath
-          nix eval --raw .#opencode-cli.drvPath
-          nix eval --raw .#openchamber.bunDeps.drvPath
-          nix eval --raw .#opencode-cli.node_modules.drvPath
+          nix eval --raw .#openchamber-web.drvPath
+          nix eval --raw .#default.drvPath
           nix flake check --no-build

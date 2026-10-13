@@ -1373,6 +1373,7 @@ export const settingsDict = {
   'settings.openchamber.keyboardShortcuts.action.toggle_services_menu.label': 'הצג/הסתר את תפריט השירותים',
   'settings.openchamber.keyboardShortcuts.action.cycle_theme.label': 'מעבר בין ערכות נושא',
   'settings.openchamber.keyboardShortcuts.action.cycle_agent.label': 'מעבר בין סוכנים',
+  'settings.openchamber.keyboardShortcuts.action.cycle_thinking_variant.label': 'מעבר בין רמות חשיבה',
   'settings.openchamber.keyboardShortcuts.action.cycle_favorite_model_forward.label': 'המודל המועדף הבא',
   'settings.openchamber.keyboardShortcuts.action.cycle_favorite_model_backward.label': 'המודל המועדף הקודם',
   'settings.openchamber.keyboardShortcuts.action.open_model_selector.label': 'פתח את בורר המודלים',

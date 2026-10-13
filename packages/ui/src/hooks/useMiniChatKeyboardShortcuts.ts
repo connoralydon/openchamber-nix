@@ -103,6 +103,12 @@ export const useMiniChatKeyboardShortcuts = () => {
   });
 
   React.useEffect(() => {
+    const handleVariantShortcutCapture = (event: KeyboardEvent) => {
+      if (dispatcher.dispatchBeforeInput('cycle_thinking_variant', event)) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
     const handleActivePrefixKeyDownCapture = (event: KeyboardEvent) => {
       if (!dispatcher.hasActivePrefix()) return;
       // An unmodified completion key typed into an editable target is only a
@@ -127,10 +133,12 @@ export const useMiniChatKeyboardShortcuts = () => {
     };
     const handleBlur = () => dispatcher.handleBlur();
 
+    window.addEventListener('keydown', handleVariantShortcutCapture, true);
     window.addEventListener('keydown', handleActivePrefixKeyDownCapture, true);
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('blur', handleBlur);
     return () => {
+      window.removeEventListener('keydown', handleVariantShortcutCapture, true);
       window.removeEventListener('keydown', handleActivePrefixKeyDownCapture, true);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('blur', handleBlur);

@@ -1341,6 +1341,7 @@ export const settingsDict = {
   "settings.openchamber.keyboardShortcuts.action.toggle_services_menu.label": "Mostrar ou ocultar menu de serviços",
   "settings.openchamber.keyboardShortcuts.action.cycle_theme.label": "Alternar tema",
   "settings.openchamber.keyboardShortcuts.action.cycle_agent.label": "Alternar agente",
+  "settings.openchamber.keyboardShortcuts.action.cycle_thinking_variant.label": "Alternar variante de raciocínio",
   "settings.openchamber.keyboardShortcuts.action.cycle_favorite_model_forward.label": "Próximo modelo favorito",
   "settings.openchamber.keyboardShortcuts.action.cycle_favorite_model_backward.label": "Modelo favorito anterior",
   "settings.openchamber.keyboardShortcuts.action.open_model_selector.label": "Abrir seletor de modelo",

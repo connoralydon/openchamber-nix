@@ -38,6 +38,15 @@ Electron starts the OpenChamber backend in-process, never as a sidecar. Developm
 
 Shared contracts must define intentional behavior for every applicable runtime: web, desktop, VS Code, hosted mobile, and Capacitor mobile.
 
+## Nix closure compatibility
+
+Components in the same Nix closure use a fixed set of versions and are deployed together.
+Update their contracts and callers together. Backward compatibility with older
+component versions is not required within that closure. Add compatibility code
+only for a supported consumer outside the closure or for stored data.
+A Nix rollback restores the previous closure but does not restore stored data.
+Check stored data and external clients or services separately when contracts change.
+
 ## Always-On Constraints
 
 - Do not modify `../opencode`; it is a separate repository.
