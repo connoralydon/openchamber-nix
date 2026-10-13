@@ -47,6 +47,18 @@ machine.
 Retain the configured state directory across reboot. It contains OpenChamber's
 settings and saved voice keys. Protect backups of that directory as credentials.
 
+## Upgrade compatibility
+
+Upstream 2.3 removes `stickyUserHeader`. Remove that key from managed settings
+before an upgrade. A stored `chatRenderMode` value of `sorted` now uses live
+message order with collapsed activity. It does not retain the old Sorted layout.
+
+Settings reconciliation fails when the server rejects or changes a managed
+value. Test the consuming configuration with the new input before updating its
+lock file. A Nix rollback restores package and module code, but leaves stored
+settings and voice keys unchanged. Test those files with the previous package
+before deployment.
+
 ## Checks
 
 Run `nix flake check` to validate module wiring and reconciliation behavior.
