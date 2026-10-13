@@ -10,7 +10,7 @@ let
   jsonFormat = pkgs.formats.json { };
 
   openchamberPackage = pkgs.callPackage ../packages/openchamber-web.nix { };
-  settingsEnabled = cfg.settings != { };
+  settingsEnabled = cfg.settings != { } || cfg.sttApiKeyFile != null;
   desiredSettingsFile = jsonFormat.generate "openchamber-managed-settings.json" cfg.settings;
 
   isLoopbackHost =
@@ -182,9 +182,23 @@ in
       default = null;
       example = "2d";
       description = ''
-        How often to reconcile services.openchamber.settings. The settings are
-        always reconciled once during system startup. Set this to null to
+        How often to reconcile services.openchamber.settings and sttApiKeyFile.
+        Both are reconciled once during system startup. Set this to null to
         disable later runs.
+      '';
+    };
+
+    sttApiKeyFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "/run/secrets/openchamber-stt-api-key";
+      description = ''
+        Path to a one-line transcription API key file. The settings reconciliation
+        service loads it through systemd credentials and saves it through
+        OpenChamber's voice-key API at startup and on each reconciliation run.
+        Keep the file outside the Nix store. This replaces the saved transcription
+        key but leaves other voice keys unchanged. Signed-in users can still
+        change the key and transcription URL between reconciliation runs.
       '';
     };
 
@@ -353,6 +367,7 @@ in
         OPENCHAMBER_RECONCILE_BASE_URL = "http://${reconcileHost}:${toString cfg.port}";
         OPENCHAMBER_RECONCILE_DESIRED_SETTINGS_FILE = desiredSettingsFile;
         OPENCHAMBER_RECONCILE_SETTINGS_FILE = "${openchamberEnvironment.OPENCHAMBER_DATA_DIR}/settings.json";
+        OPENCHAMBER_RECONCILE_STT_API_KEY = lib.boolToString (cfg.sttApiKeyFile != null);
       };
       serviceConfig = {
         Type = "oneshot";
@@ -360,7 +375,9 @@ in
         Group = cfg.group;
         WorkingDirectory = cfg.stateDir;
         ExecStart = "${pkgs.nodejs_22}/bin/node ${./openchamber-settings-reconcile.mjs}";
-        LoadCredential = lib.optional (cfg.passwordFile != null) "ui-password:${cfg.passwordFile}";
+        LoadCredential =
+          lib.optional (cfg.passwordFile != null) "ui-password:${cfg.passwordFile}"
+          ++ lib.optional (cfg.sttApiKeyFile != null) "stt-api-key:${cfg.sttApiKeyFile}";
       };
     };
 

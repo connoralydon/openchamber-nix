@@ -117,16 +117,44 @@ const mismatchedKeys = (desired, actual) =>
 const valuesForKeys = (source, keys) =>
   Object.fromEntries(keys.map((key) => [key, source[key]]));
 
+const reconcileSttApiKey = async (fetchImpl, baseUrl, cookie, sttApiKey, log) => {
+  if (sttApiKey === null) return;
+
+  const url = `${baseUrl}/api/voice/keys`;
+  const headers = cookie ? { Cookie: cookie } : {};
+  // The API reports only presence, so write on every run to apply key rotation.
+  const { body: updated } = await requestJson(fetchImpl, url, {
+    method: 'PUT',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ stt: sttApiKey }),
+  });
+  if (updated.stt !== true) {
+    throw new Error('OpenChamber rejected the managed transcription key');
+  }
+  const { body: verified } = await requestJson(fetchImpl, url, { headers });
+  if (verified.stt !== true) {
+    throw new Error('OpenChamber did not retain the managed transcription key');
+  }
+  log('[settings-reconcile] Updated transcription key');
+};
+
 export const reconcileSettings = async ({
   baseUrl,
   desiredSettings,
   password = null,
+  sttApiKey = null,
   settingsFilePath,
   fetchImpl = globalThis.fetch,
   readFileImpl = readFile,
   sleepImpl = sleep,
   log = console.log,
 }) => {
+  const transcriptionKey = sttApiKey === null ? null : sttApiKey.trim();
+  if (transcriptionKey !== null && (
+    !transcriptionKey || transcriptionKey.length > 1024 || /[\r\n]/.test(transcriptionKey)
+  )) {
+    throw new Error('The managed transcription key must be a nonempty single line of at most 1024 characters');
+  }
   await waitUntilReady(fetchImpl, baseUrl, sleepImpl);
   await validatePersistedSettings(settingsFilePath, readFileImpl);
 
@@ -134,6 +162,7 @@ export const reconcileSettings = async ({
   const { body: current } = await settingsRequest(fetchImpl, baseUrl, cookie);
   const changedKeys = mismatchedKeys(desiredSettings, current);
   if (changedKeys.length === 0) {
+    await reconcileSttApiKey(fetchImpl, baseUrl, cookie, transcriptionKey, log);
     log('[settings-reconcile] Managed settings already match');
     return { changedKeys, restarted: false };
   }
@@ -152,6 +181,7 @@ export const reconcileSettings = async ({
   const { body: verified } = await settingsRequest(fetchImpl, baseUrl, cookie);
   const staleKeys = mismatchedKeys(desiredSettings, verified);
   if (staleKeys.length === 0) {
+    await reconcileSttApiKey(fetchImpl, baseUrl, cookie, transcriptionKey, log);
     log(`[settings-reconcile] Updated settings: ${changedKeys.join(', ')}`);
     return { changedKeys, restarted: false };
   }
@@ -173,15 +203,28 @@ export const reconcileSettings = async ({
     throw new Error(`Managed settings still differ after restart: ${remainingKeys.join(', ')}`);
   }
 
+  await reconcileSttApiKey(fetchImpl, baseUrl, restartedCookie, transcriptionKey, log);
   log(`[settings-reconcile] Updated settings after restart: ${changedKeys.join(', ')}`);
   return { changedKeys, restarted: true };
 };
 
-const readCredential = async () => {
-  const directory = process.env.CREDENTIALS_DIRECTORY;
-  if (!directory) return null;
-  const value = await readFile(`${directory}/ui-password`, 'utf8');
-  return value.split(/\r?\n/, 1)[0];
+export const readCredential = async (name, {
+  directory = process.env.CREDENTIALS_DIRECTORY,
+  required = false,
+  readFileImpl = readFile,
+} = {}) => {
+  if (directory) {
+    try {
+      const value = await readFileImpl(`${directory}/${name}`, 'utf8');
+      return name === 'ui-password' ? value.split(/\r?\n/, 1)[0] : value;
+    } catch (error) {
+      if (required || error?.code !== 'ENOENT') {
+        throw new Error(`Cannot read OpenChamber credential: ${name}`);
+      }
+    }
+  }
+  if (required) throw new Error(`Missing OpenChamber credential: ${name}`);
+  return null;
 };
 
 const main = async () => {
@@ -195,7 +238,9 @@ const main = async () => {
   await reconcileSettings({
     baseUrl,
     desiredSettings: await readJsonObject(desiredSettingsFile),
-    password: await readCredential(),
+    password: await readCredential('ui-password'),
+    sttApiKey: process.env.OPENCHAMBER_RECONCILE_STT_API_KEY === 'true'
+      ? await readCredential('stt-api-key', { required: true }) : null,
     settingsFilePath,
   });
 };
