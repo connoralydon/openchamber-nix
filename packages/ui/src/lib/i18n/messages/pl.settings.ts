@@ -884,6 +884,7 @@ export const settingsDict = {
   'settings.openchamber.keyboardShortcuts.action.cycle_favorite_model_forward.label': 'Przełącz ulubiony model w przód',
   'settings.openchamber.keyboardShortcuts.action.cycle_theme.label': 'Przełącz motyw',
   'settings.openchamber.keyboardShortcuts.action.cycle_agent.label': 'Przełącz agenta',
+  'settings.openchamber.keyboardShortcuts.action.cycle_thinking_variant.label': 'Przełącz wariant myślenia',
   'settings.openchamber.keyboardShortcuts.action.expand_input.label': 'Rozwiń pole wprowadzania',
   'settings.openchamber.keyboardShortcuts.action.toggle_prompt_navigator.label': 'Przełącz nawigator promptów',
   'settings.openchamber.keyboardShortcuts.action.focus_input.label': 'Skup pole wprowadzania',

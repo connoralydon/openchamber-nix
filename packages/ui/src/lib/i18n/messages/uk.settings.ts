@@ -1367,6 +1367,7 @@ export const settingsDict = {
   "settings.openchamber.keyboardShortcuts.action.toggle_services_menu.label": "Перемкнути меню сервісів",
   "settings.openchamber.keyboardShortcuts.action.cycle_theme.label": "Перемкнути тему",
   "settings.openchamber.keyboardShortcuts.action.cycle_agent.label": "Перемкнути агента",
+  "settings.openchamber.keyboardShortcuts.action.cycle_thinking_variant.label": "Перемкнути варіант мислення",
   "settings.openchamber.keyboardShortcuts.action.cycle_favorite_model_forward.label": "Перемкнути улюблену модель вперед",
   "settings.openchamber.keyboardShortcuts.action.cycle_favorite_model_backward.label": "Перемкнути улюблену модель назад",
   "settings.openchamber.keyboardShortcuts.action.open_model_selector.label": "Відкрити вибір моделі",

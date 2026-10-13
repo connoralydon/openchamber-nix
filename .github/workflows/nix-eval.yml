@@ -1,7 +1,6 @@
 # Catches anything that breaks the flake's evaluation before merge: a PR
-# touching the flake (or packages/electron/package.json, whose Electron
-# devDependency and opencodeCli.version the flake reads at eval time) must
-# still evaluate every package. Read-only: no builds, no cache, no write permissions.
+# touching the flake must still evaluate every package. Read-only: no
+# builds, no cache, no write permissions.
 name: nix-eval
 
 on:
@@ -10,7 +9,6 @@ on:
       - flake.nix
       - flake.lock
       - nix/**
-      - packages/electron/package.json
   workflow_dispatch:
 
 permissions:
@@ -30,9 +28,6 @@ jobs:
 
       - name: Evaluate the flake's outputs
         run: |
-          nix eval --raw .#openchamber.drvPath
-          nix eval --raw .#openchamber-desktop.drvPath
-          nix eval --raw .#opencode-cli.drvPath
-          nix eval --raw .#openchamber.bunDeps.drvPath
-          nix eval --raw .#opencode-cli.node_modules.drvPath
+          nix eval --raw .#openchamber-web.drvPath
+          nix eval --raw .#default.drvPath
           nix flake check --no-build

@@ -83,6 +83,19 @@ describe('shortcut schema', () => {
     expect(getEffectiveShortcutCombo('new_chat', { new_chat: 'mod+k x y' })).toBe('mod+n');
   });
 
+  test('accepts a primary-modifier model leader and a configurable variant shortcut', () => {
+    const overrides = { open_model_selector: 'mod+x m', cycle_thinking_variant: 'ctrl+t' };
+    expect(getEffectiveShortcutCombo('open_model_selector', overrides)).toBe('mod+x m');
+    expect(getEffectiveShortcutCombo('cycle_thinking_variant', overrides)).toBe('ctrl+t');
+    expect(getEffectiveShortcutCombo('cycle_thinking_variant')).toBe('mod+shift+t');
+    expect(getEffectiveShortcutCombo('cycle_thinking_variant', {
+      cycle_thinking_variant: '__unassigned__',
+    })).toBe('');
+    expect(getCustomizableShortcutActions().some((action) => action.id === 'cycle_thinking_variant')).toBe(true);
+    expect(getShortcutBindingConflicts('open_model_selector', overrides.open_model_selector, overrides)).toEqual([]);
+    expect(getShortcutBindingConflicts('cycle_thinking_variant', overrides.cycle_thinking_variant, overrides)).toEqual([]);
+  });
+
   test('keeps internal bindings authoritative over persisted overrides', () => {
     expect(getEffectiveShortcutCombo('save_file', { save_file: 'mod+k' })).toBe('mod+s');
     expect(getEffectiveShortcutCombo('save_file', { save_file: '__unassigned__' })).toBe('mod+s');
