@@ -40,7 +40,7 @@ import {
 } from '@/components/ui/dialog';
 import { Icon } from "@/components/icon/Icon";
 import { SimpleMarkdownRenderer } from '@/components/chat/MarkdownRenderer';
-import { PreviewToggleButton } from '@/components/views/PreviewToggleButton';
+import { ToolbarTooltipButton } from '@/components/ui/action-toolbar';
 import { SkillsCatalogPage } from './catalog/SkillsCatalogPage';
 import { SkillUseField } from './SkillUseField';
 import {
@@ -699,9 +699,11 @@ const SkillsInstalledPage: React.FC = () => {
         <SettingsSection
           title={t('settings.skills.page.section.instructions')}
           headerAction={(
-            <PreviewToggleButton
-              currentMode={skillEditorMode === 'preview' ? 'preview' : 'edit'}
-              onToggle={() => setSkillEditorMode((mode) => mode === 'preview' ? 'edit' : 'preview')}
+            <ToolbarTooltipButton
+              label={t('documentToolbar.preview')}
+              icon="eye"
+              pressed={skillEditorMode === 'preview'}
+              onClick={() => setSkillEditorMode((mode) => mode === 'preview' ? 'edit' : 'preview')}
             />
           )}
           settingsItem="skills.instructions"

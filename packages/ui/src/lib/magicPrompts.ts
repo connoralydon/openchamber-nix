@@ -533,7 +533,9 @@ Focus on correctness, regressions, missing implementation, missing tests, and wh
     ],
     template: `Another agent reviewed your changes and left the feedback below.
 
-Fix the findings you agree with. When you think a finding is wrong, leave the code as it is and explain why. Then list what you changed and which findings you declined, with the reason for each.
+Weigh each finding yourself before you act on it. A problem your change neither causes nor set out to fix, such as another path, a rare case or a small cost that was there before, is a nit whatever label it came with. Something your change breaks is never a nit, however rare. Fix what is wrong in the case this change is for, with the smallest fix: one that deletes or narrows code beats a new guard, helper, option or test the goal does not need. When you think a finding is wrong, leave the code as it is and say why, with evidence: file and line, a test, command output. Decline nits and anything outside the change in one line each. Do not agree with a finding just to end the review.
+
+Then list what you changed and which findings you declined, with the reason for each.
 
 {{review_feedback}}`,
   },

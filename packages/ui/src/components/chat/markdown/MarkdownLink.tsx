@@ -17,7 +17,8 @@ import { parseAgentHref, parseAttachmentHref, parseSkillHref, INLINE_REFERENCE_C
 import { openAppLinkWithConfirmation } from '../appLinkConfirmation';
 import { useOpenChatLink } from '../useOpenChatLink';
 import { useMarkdownPresentation } from './MarkdownPresentationContext';
-import { activateMarkdownFile, resolveMarkdownFile, useOpenMarkdownFile } from './markdownFileReferences';
+import { activateMarkdownFile, resolveMarkdownFile, useOpenMarkdownFile, useRevealMarkdownPath } from './markdownFileReferences';
+import { localPathFromFileUrl } from '../fileReferenceParser';
 import { MarkdownMediaLinkContext, useMarkdownMedia } from './markdown-media-context';
 import { openMarkdownDocumentLink } from '@/components/views/files/previews/useMarkdownLocalAssets';
 
@@ -131,9 +132,11 @@ function ScreenMarkdownHref({ href, children: originalChildren, node, ...props }
   const mentionChip = session ? mentionChips.get(sessionLinkKey(session)) : undefined;
   const app = isAppLinkUrl(href);
   const file = presentation.fileNavigation && resolveMarkdownFile(href, directory, 'click');
+  const revealPath = useRevealMarkdownPath();
+  const folder = presentation.fileNavigation && !file && revealPath ? localPathFromFileUrl(href) : null;
   // A link whose URL is not a file but whose text is a path opens that file
   // once the file is confirmed, as the old annotation pass did.
-  const probe = file || app || session || skill || agent || attachment ? href : text;
+  const probe = file || folder || app || session || skill || agent || attachment ? href : text;
   const path = useConfirmedInlineFile(probe);
   const textFile = Boolean(path && probe !== href);
   const external = isExternalHttpUrl(href);
@@ -164,6 +167,10 @@ function ScreenMarkdownHref({ href, children: originalChildren, node, ...props }
     if (skill) return;
     if (file) {
       activateMarkdownFile(event, (external) => { void openFile(href, path ?? undefined, external); });
+      return;
+    }
+    if (folder && revealPath) {
+      activateMarkdownFile(event, () => revealPath(folder));
       return;
     }
     if (href.startsWith('#') && !media?.documentAssets) {

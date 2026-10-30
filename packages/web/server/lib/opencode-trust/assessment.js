@@ -33,6 +33,11 @@ const defaultGlobalConfigDirectories = () => {
 const CONFIG_FILES = ['opencode.json', 'opencode.jsonc'];
 const PLUGIN_DIRECTORIES = ['plugin', 'plugins'];
 const PLUGIN_SOURCE = /\.(ts|js)$/;
+const SCRIPT_SOURCE = /\.[cm]?[jt]sx?$/;
+// `from '…'`, `import '…'`, `import('…')` and `require('…')`. A match in a
+// comment or a string only hashes one more file.
+const IMPORT_SPECIFIER = /\b(?:from|import|require)\s*\(?\s*(['"`])([^'"`\n]+)\1/g;
+const IMPORT_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs', '.json'];
 
 // A plugin folder is hashed file by file. Past these limits the remaining
 // files count by path and size only, so a huge vendored tree cannot stall the
@@ -67,9 +72,21 @@ const levelsToScan = (directory, homeDirectory) => {
 
 const hashFile = async (fsPromises, file) => sha256(await fsPromises.readFile(file));
 
+const newBudget = () => ({ files: TREE_CONTENT_FILE_LIMIT, bytes: TREE_CONTENT_BYTE_LIMIT });
+
+/** Takes one file of `size` bytes from `budget`; false once it is spent. */
+const spend = (budget, size) => {
+  if (budget.files <= 0 || budget.bytes < size) return false;
+  budget.files -= 1;
+  budget.bytes -= size;
+  return true;
+};
+
+/** Hash of a plugin folder and the script files in it, whose imports are followed. */
 const hashTree = async (fsPromises, root) => {
   const lines = [];
-  const budget = { files: TREE_CONTENT_FILE_LIMIT, bytes: TREE_CONTENT_BYTE_LIMIT };
+  const scripts = [];
+  const budget = newBudget();
   const visit = async (directory) => {
     const entries = (await readDirectoryOrEmpty(fsPromises, directory))
       .filter((entry) => entry.name !== '.git')
@@ -87,24 +104,91 @@ const hashTree = async (fsPromises, root) => {
         lines.push(`${relative}/ -> link`);
         continue;
       }
-      if (budget.files > 0 && budget.bytes >= info.size) {
-        budget.files -= 1;
-        budget.bytes -= info.size;
+      if (spend(budget, info.size)) {
         lines.push(`${relative} ${await hashFile(fsPromises, target).catch(() => 'unreadable')}`);
+        if (SCRIPT_SOURCE.test(entry.name)) scripts.push(target);
       } else {
         lines.push(`${relative} size:${info.size}`);
       }
     }
   };
   await visit(root);
-  return sha256(lines.join('\n'));
+  return { hash: sha256(lines.join('\n')), scripts };
 };
 
-/** Content hash of a plugin file or folder; null when it is gone. */
+const isFileAt = async (fsPromises, target) => Boolean((await statOrNull(fsPromises, target))?.isFile());
+
+/** The file a local import names, the way Bun resolves it; null when there is none. */
+const resolveImport = async (fsPromises, specifier, fromDirectory) => {
+  const base = resolveLocalPluginReference(specifier, fromDirectory);
+  if (!base) return null;
+  const candidates = [
+    base,
+    // TypeScript sources import each other by their emitted `.js` names.
+    base.replace(/\.([mc]?)js(x?)$/, '.$1ts$2'),
+    ...IMPORT_EXTENSIONS.map((extension) => base + extension),
+    ...IMPORT_EXTENSIONS.map((extension) => path.join(base, `index${extension}`)),
+  ];
+  for (const candidate of candidates) {
+    if (await isFileAt(fsPromises, candidate)) return candidate;
+  }
+  return null;
+};
+
+/**
+ * Lines naming every local file a plugin's scripts import, directly or
+ * through each other, outside the plugin itself, each with its content hash,
+ * plus every local import that names no file yet. Package imports are not
+ * followed: a repository does not write `node_modules`.
+ */
+const importedFileLines = async (fsPromises, pluginRoot, base, scripts) => {
+  const isOwn = (file) => file === pluginRoot || file.startsWith(pluginRoot + path.sep);
+  const relative = (file) => toSlashes(path.relative(base, file));
+  const budget = newBudget();
+  const seen = new Set(scripts);
+  const queue = [...scripts];
+  const lines = [];
+  while (queue.length > 0) {
+    const file = queue.shift();
+    const info = await statOrNull(fsPromises, file);
+    if (!info) continue;
+    if (!spend(budget, info.size)) {
+      if (!isOwn(file)) lines.push(`${relative(file)} size:${info.size}`);
+      continue;
+    }
+    const content = await fsPromises.readFile(file).catch(() => null);
+    if (!content) continue;
+    if (!isOwn(file)) lines.push(`${relative(file)} ${sha256(content)}`);
+    if (!SCRIPT_SOURCE.test(file)) continue;
+    for (const [, , specifier] of content.toString('utf8').matchAll(IMPORT_SPECIFIER)) {
+      if (specifier.includes('${') || !isLocalPluginReference(specifier)) continue;
+      const target = await resolveImport(fsPromises, specifier, path.dirname(file));
+      if (!target) {
+        lines.push(`${relative(file)} imports ${specifier}: missing`);
+        continue;
+      }
+      if (seen.has(target)) continue;
+      seen.add(target);
+      queue.push(target);
+    }
+  }
+  return lines.sort();
+};
+
+/**
+ * Content hash of a plugin file or folder and the local files it imports;
+ * null when it is gone. A plugin that imports nothing local keeps the hash of
+ * its own content, so answers given before imports were followed still hold.
+ */
 const hashPluginTarget = async (fsPromises, target) => {
   const info = await statOrNull(fsPromises, target);
   if (!info) return null;
-  return info.isDirectory() ? hashTree(fsPromises, target) : hashFile(fsPromises, target).catch(() => null);
+  const own = info.isDirectory()
+    ? await hashTree(fsPromises, target)
+    : { hash: await hashFile(fsPromises, target).catch(() => null), scripts: [target] };
+  if (own.hash === null) return null;
+  const imports = await importedFileLines(fsPromises, target, info.isDirectory() ? target : path.dirname(target), own.scripts);
+  return imports.length === 0 ? own.hash : sha256([own.hash, ...imports].join('\n'));
 };
 
 const isLocalPluginReference = (value) => (

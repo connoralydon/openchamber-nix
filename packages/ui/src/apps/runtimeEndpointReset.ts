@@ -12,6 +12,7 @@ import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useProjectContextStore } from '@/stores/useProjectContextStore';
 import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { useAutoReviewStore } from '@/stores/useAutoReviewStore';
+import { resetPrWatchesForRuntimeSwitch } from '@/sync/pr-watch';
 import { usePermissionStore } from '@/stores/permissionStore';
 import { useMessageQueueStore } from '@/stores/messageQueueStore';
 import { useFileSearchStore } from '@/stores/useFileSearchStore';
@@ -65,9 +66,9 @@ export const reconnectAppForTransportSwitch = (): void => {
 
 export const resetAppForRuntimeEndpointChange = (detail: RuntimeEndpointChangedDetail): void => {
   useSessionUIStore.getState().prepareForRuntimeSwitch(detail.previousRuntimeKey);
-  if (detail.previousRuntimeKey) {
-    useAutoReviewStore.getState().stopRunningRunsForRuntime(detail.previousRuntimeKey);
-  }
+  // The previous server keeps its runs going; this window shows the new one's.
+  useAutoReviewStore.getState().resetForRuntimeSwitch();
+  resetPrWatchesForRuntimeSwitch();
   disposeTerminalInputTransport();
   useTerminalStore.getState().clearAll();
   opencodeClient.reconnectToRuntimeBaseUrl();
@@ -161,8 +162,8 @@ export const isSameRuntimeEndpoint = (detail: RuntimeEndpointChangedDetail): boo
 // mounts against the new runtime with an SDK that still calls the old one, so
 // initialization never completes and the startup overlay never lifts.
 // A same-runtime credential change stays with App, which resets only while
-// mounted: a sign-in on the login screen must keep the terminal tabs and
-// auto-review runs of the host being unlocked. Mobile keeps its own subscriber
+// mounted: a sign-in on the login screen must keep the terminal tabs of the
+// host being unlocked. Mobile keeps its own subscriber
 // because it tells transport switches apart from runtime switches.
 export const installRuntimeEndpointReset = (): (() => void) => (
   subscribeRuntimeEndpointChanged((detail) => {

@@ -163,6 +163,8 @@ export type SyncEvent =
   /** A shell command exited or was removed. */
   | { type: "shell.ended"; properties: { shellID: string; end: ShellEnd; endedAt: number } }
   | { type: "vcs.branch.updated"; properties: { branch?: string } }
+  /** A file someone asked OpenCode to watch (`lib/watchedFiles`) changed or was removed; `file` is absolute. */
+  | { type: "filesystem.changed"; properties: { file: string } }
   | { type: "mcp.status.changed"; properties: { server: string } }
   | { type: "catalog.updated"; properties: { kind: CatalogKind } }
   /**
@@ -864,10 +866,10 @@ export function translateWireEvent(event: OpenCodeEvent): SyncEvent[] {
     // (`mcp.status.changed`).
     case "mcp.resources.changed":
       return []
-    // 2.x watches only the repository HEAD here, not the project's files. File
-    // browsers refresh from tool and step results instead (`lib/fileTreeChanges`).
+    // Only files a client asked to watch (`lib/watchedFiles`) report here; file
+    // listings still refresh from tool and step results (`lib/fileTreeChanges`).
     case "filesystem.changed":
-      return []
+      return [{ type: "filesystem.changed", properties: { file: event.data.file } }]
     // Worktrees go through OpenChamber's own git API, not OpenCode's.
     case "worktree.updated":
     case "worktree.resolved":

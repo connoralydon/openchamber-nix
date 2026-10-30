@@ -4,7 +4,6 @@ import {
   KeyboardSensor,
   MouseSensor,
   TouchSensor,
-  closestCenter,
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
@@ -27,7 +26,8 @@ import { SessionSidebarFolderItem } from '../folders/SessionSidebarFolderItem';
 import { SessionTreeItem } from '../sessions/SessionTreeItem';
 import { RunSidebarRow } from '../sessions/RunSidebarRow';
 import { computeNodeStructureKey, nodeContainsSessionId } from '../sessions/sessionNodeItemUtils';
-import { DroppableFolderWrapper } from '../folders/sessionFolderDnd';
+import { DroppableFolderWrapper, SessionFolderOwnersProvider } from '../folders/sessionFolderDnd';
+import { sessionFolderCollision } from '../folders/sessionFolderCollision';
 import { FolderDeleteConfirmDialog, type DeleteFolderConfirmState } from '../shell/ConfirmDialogs';
 import type { SessionGroup } from '../types';
 import { SessionSidebarRows } from '../SessionSidebarRows';
@@ -37,7 +37,7 @@ import { resolveSessionSidebarStickyHeader, type SessionSidebarRow, type Session
 import { SortableProjectItem } from './sortableItems';
 import { WorktreeWorkRow } from '../works/WorktreeWorkRow';
 import { SessionDraftRow } from '../works/SessionDraftRow';
-import { isWorktreeWorkGroup } from '../works/sidebarWorks';
+import { isGroupWork } from '../works/sidebarWorks';
 import { SessionGroupSection, type SessionGroupSectionProps } from './SessionGroupSection';
 import type { ProjectSection } from './sessionProjectRender';
 import { CrossfadeZoneHeader, CrossfadeZoneHeaders } from './CrossfadeZoneHeaders';
@@ -345,9 +345,9 @@ function SessionProjectScrollerComponent({ model, view, actions }: SessionProjec
       />;
     }
     if (row.kind === 'group-header') {
-      // A worktree is a work of its own and reads like a session row; spaces
-      // and the archive keep their group header.
-      return isWorktreeWorkGroup(row.group)
+      // A worktree or a space is a work of its own and reads like a session
+      // row; the archive keeps its group header.
+      return isGroupWork(row.group)
         ? <WorktreeWorkRow
           group={row.group} groupKey={row.groupKey} projectId={row.projectId} depth={row.depth} detailed={row.detailed} mixed={row.mixed}
           collapsed={row.collapsed} forceExpanded={row.forceExpanded} empty={row.empty}
@@ -408,7 +408,7 @@ function SessionProjectScrollerComponent({ model, view, actions }: SessionProjec
       return <div onFocusCapture={() => setFocusedRowKey(row.key)} onBlurCapture={() => setFocusedRowKey((current) => current === row.key ? null : current)}>
         <SessionTreeItem
           {...model.groupProps}
-          node={row.node} depth={row.depth} groupDirectory={row.groupDirectory} projectId={row.projectId}
+          node={row.node} depth={row.depth} ownsWork={row.ownsWork} groupDirectory={row.groupDirectory} projectId={row.projectId}
           folderOwnerKey={row.ownerKey} selectionScopeKey={row.selectionScopeKey}
           archivedBucket={row.archived} renderContext={row.renderContext} detailed={row.detailed} rowKey={row.key} dragKey={row.key}
           secondaryMeta={row.secondaryMeta} renderChildren={false}
@@ -449,7 +449,19 @@ function SessionProjectScrollerComponent({ model, view, actions }: SessionProjec
       ? FLAT_TEXT_INSET_PX
       : sessionTreeTextInset(row.kind === 'show-control' || row.kind === 'empty' ? row.depth ?? 0 : 0);
     if (row.kind === 'show-control') {
-      return <div><button type="button" className="mt-0.5 flex items-center justify-start rounded-md pe-1.5 py-0.5 text-start text-xs text-muted-foreground/70 leading-tight hover:text-foreground hover:underline" style={{ paddingInlineStart: rowTextInset }} onClick={() => applyShowControl(row, { model, actions })}>{t(row.control === 'more' ? 'sessions.sidebar.group.showMore' : 'sessions.sidebar.group.showFewer')}</button></div>;
+      // Small and short, so it reads as a control under the list, not a row of it.
+      const control = (kind: 'more' | 'fewer') => (
+        <button type="button" className="rounded-md py-0.5 typography-micro text-muted-foreground leading-tight hover:text-foreground hover:underline" onClick={() => applyShowControl(row, kind, { model, actions })}>
+          {t(kind === 'more' ? 'sessions.sidebar.group.showMore' : 'sessions.sidebar.group.showFewer')}
+        </button>
+      );
+      return (
+        <div className="mt-0.5 flex items-center gap-1.5 pe-1.5" style={{ paddingInlineStart: rowTextInset }}>
+          {row.more ? control('more') : null}
+          {row.more && row.fewer ? <span aria-hidden="true" className="typography-micro text-muted-foreground/50">·</span> : null}
+          {row.fewer ? control('fewer') : null}
+        </div>
+      );
     }
     if (row.kind === 'status') return renderStatus(row);
     if (row.emptyKind === 'sidebar') return model.emptyState;
@@ -463,6 +475,8 @@ function SessionProjectScrollerComponent({ model, view, actions }: SessionProjec
     row.kind === 'project-header' ? [row.section.project.id] : []
   )), [model.rowModel.rows]);
   const projectDragIds = React.useMemo(() => new Set(model.sectionsForRender.map((section) => section.project.id)), [model.sectionsForRender]);
+  const folderDropOwnerKeys = React.useMemo(() => model.rowModel.folderDropTargets
+    .flatMap((target) => (target.enabled ? [target.ownerKey] : [])), [model.rowModel.folderDropTargets]);
   const zoneLayoutKey = React.useMemo(() => model.rowModel.stickyHeaders
     .map(({ kind, id, rowIndex }) => `${kind}:${id}:${rowIndex}`)
     .join('\u0001'), [model.rowModel.stickyHeaders]);
@@ -478,7 +492,8 @@ function SessionProjectScrollerComponent({ model, view, actions }: SessionProjec
         ref={setScrollContainer} useScrollShadow hideTopScrollShadow scrollShadowSize={40}
         outerClassName="flex-1 min-h-0" className="oc-sidebar-scroller pb-1 ps-2.5 pe-2 [overflow-anchor:none]"
       >
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={(event) => {
+        <SessionFolderOwnersProvider ownerKeys={folderDropOwnerKeys}>
+        <DndContext sensors={sensors} collisionDetection={sessionFolderCollision} onDragStart={(event) => {
           // Session rows drag into folders and take no part in the header sort.
           setProjectDragging(projectDragIds.has(String(event.active.id)));
         }} onDragCancel={() => setProjectDragging(false)} onDragEnd={(event) => {
@@ -513,6 +528,7 @@ function SessionProjectScrollerComponent({ model, view, actions }: SessionProjec
             <SessionSidebarRows model={model.rowModel} scrollElement={scrollElement} pinnedRowIndexes={pinnedRowIndexes} renderRow={renderRow} onFirstVisibleIndexChange={handleFirstVisibleIndexChange} />
           </SortableContext>
         </DndContext>
+        </SessionFolderOwnersProvider>
       </ScrollableOverlay>
     </CrossfadeZoneHeaders>
     <FolderDeleteConfirmDialog value={folderDeleteConfirm} setValue={setFolderDeleteConfirm} onConfirm={() => {

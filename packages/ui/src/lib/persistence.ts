@@ -191,6 +191,7 @@ const persistToLocalStorage = (settings: DesktopSettings) => {
   setOrRemoveLocalStorage('sttModel', typeof settings.sttModel === 'string' ? settings.sttModel : null);
   setOrRemoveLocalStorage('sttLocalModel', typeof settings.sttLocalModel === 'string' ? settings.sttLocalModel : null);
   setOrRemoveLocalStorage('sttLanguage', typeof settings.sttLanguage === 'string' ? settings.sttLanguage : null);
+  setOrRemoveLocalStorage('sttCorrectTranscript', settings.sttCorrectTranscript === undefined ? null : String(settings.sttCorrectTranscript));
 };
 
 export interface SettingsSyncedDetail {

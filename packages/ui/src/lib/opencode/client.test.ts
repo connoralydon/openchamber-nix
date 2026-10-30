@@ -407,6 +407,30 @@ describe("sendMessage", () => {
     expect(requests.every((r) => r.headers.get("x-opencode-directory") === encodeURIComponent("/repo/app"))).toBe(true)
   })
 
+  test("beforeSend runs once every context part was admitted and right before the prompt leaves", async () => {
+    const seen: string[] = []
+    responses.push(
+      json({ id: "syn_1" }),
+      // The second context part answers late: beforeSend must still wait for it.
+      async () => { await new Promise((resolve) => setTimeout(resolve, 20)); seen.push("context admitted"); return json({ id: "syn_2" }) },
+      () => { seen.push("prompt request"); return json({ id: "msg_1" }) },
+    )
+    await opencodeClient.sendMessage({
+      id: "ses_1",
+      providerID: "openai",
+      text: "hello",
+      messageId: "msg_1",
+      context: [{ text: "first" }, { text: "second" }],
+      beforeSend: () => { seen.push("beforeSend") },
+    })
+    expect(seen).toEqual(["context admitted", "beforeSend", "prompt request"])
+    expect(requests.map((r) => r.url.pathname)).toEqual([
+      "/api/session/ses_1/synthetic",
+      "/api/session/ses_1/synthetic",
+      "/api/session/ses_1/prompt",
+    ])
+  })
+
   test("context ids travel with the synthetic messages and sort below the prompt id", async () => {
     responses.push(json({ id: "a" }), json({ id: "b" }), json({ id: "c" }))
     const id = await opencodeClient.sendMessage({
@@ -848,26 +872,6 @@ describe("messages and config", () => {
     expect(catalog.models[0]).toEqual(model)
   })
 
-  test("providers are asked only after the models answered", async () => {
-    // OpenCode 2.0.27+ holds the model routes until the directory's plugins are
-    // active; a provider read sent alongside answers before them, empty.
-    const answer = (request: CapturedRequest) =>
-      request.url.pathname === "/api/provider"
-        ? json({ location: {}, data: [{ id: "openai", name: "OpenAI" }] })
-        : request.url.pathname === "/api/model"
-          ? json({ location: {}, data: [{ id: "openai/x", modelID: "x", providerID: "openai" }] })
-          : json({ location: {}, data: { id: "openai/x", modelID: "x", providerID: "openai" } })
-    responses.push(answer, answer, answer)
-    const before = requests.length
-
-    await opencodeClient.getProvidersForConfig("/repo/app")
-    expect(requests.slice(before).map((request) => request.url.pathname)).toEqual([
-      "/api/model",
-      "/api/model/default",
-      "/api/provider",
-    ])
-  })
-
   test("a fresh provider read waits out the one in flight and reads again", async () => {
     const answer = (request: CapturedRequest) =>
       request.url.pathname === "/api/provider"
@@ -902,20 +906,13 @@ describe("providers of an isolated space", () => {
     const space = "/spaces/a1b2c3d4e5f6/app"
     useSpacesStore.getState().applyMarks([{ id: "a1b2c3d4e5f6", name: "One", state: "complete", projectDirectory: "/repo/app", directory: space }])
     try {
-      responses.push(providerAnswer, providerAnswer, providerAnswer, providerAnswer)
+      responses.push(providerAnswer, providerAnswer, providerAnswer)
       const before = requests.length
       const catalog = await opencodeClient.getProvidersForConfig(space)
       expect(catalog.providers).toEqual([{ id: "lighthouse", name: "Lighthouse" }])
-      const made = requests.slice(before)
-      const providerIndex = made.findIndex((request) => request.url.pathname.endsWith("/provider"))
-      const provider = made[providerIndex]
+      const provider = requests.slice(before).find((request) => request.url.pathname.endsWith("/provider"))
       expect(provider?.url.pathname).toBe("/api/provider")
       expect(provider?.headers.get("x-opencode-directory")).toBe(encodeURIComponent("/repo/app"))
-      // The host project may have stopped: its model route, which waits for the location to start,
-      // is read before its providers, as for any folder.
-      const projectModels = made.findIndex((request) => request.url.pathname.endsWith("/model") && request.headers.get("x-opencode-directory") === encodeURIComponent("/repo/app"))
-      expect(projectModels).toBeGreaterThanOrEqual(0)
-      expect(projectModels).toBeLessThan(providerIndex)
     } finally {
       useSpacesStore.getState().applyMarks([])
     }

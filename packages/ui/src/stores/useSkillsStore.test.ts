@@ -324,6 +324,18 @@ describe('useSkillsStore directory resolution', () => {
     ]);
   });
 
+  test('a switch from a project with a non-Latin path reaches the server', async () => {
+    const directory = '/workspace/мій-проєкт';
+    expect(await useSkillsStore.getState().loadSkills(directory)).toBe(true);
+    const [skill] = useSkillsStore.getState().skillsByDirectory[directory];
+
+    runtimeFetchImpl = async () => new Response(JSON.stringify({ changed: [`${directory}/.opencode/opencode.json`] }), { headers: { 'Content-Type': 'application/json' } });
+    expect(await useSkillsStore.getState().setSkillEnabled(skill, false, directory)).toBe(true);
+    const switchCall = runtimeFetchCalls.at(-1);
+    expect(switchCall?.url).toContain(`/api/config/skill-switch?directory=${encodeURIComponent(directory)}`);
+    expect(switchCall?.headers).toEqual({ 'Content-Type': 'application/json', 'x-opencode-directory': directory });
+  });
+
   test('statements never read are unknown, not empty, and the next load asks again', async () => {
     policiesImpl = async () => { throw new Error('offline'); };
     expect(await useSkillsStore.getState().loadSkills()).toBe(true);

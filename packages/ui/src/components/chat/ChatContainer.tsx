@@ -102,6 +102,7 @@ import {
 } from '@/sync/sync-context';
 import { useSync } from '@/sync/use-sync';
 import { useI18n } from '@/lib/i18n';
+import { useDraftHeading } from './useDraftHeading';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { eventMatchesShortcut, getEffectiveShortcutCombo } from '@/lib/shortcuts';
 import { ChatSearchBar } from './search/ChatSearchBar';
@@ -115,6 +116,8 @@ import { resolveChatPromptReadOnly } from './chatPromptReadOnly';
 import { PermissionDock } from './PermissionDock';
 import { FormDock } from './FormDock';
 import { ensureSpaceArchives, useSpaceArchiveOf } from '@/lib/spaces/space-archives';
+import { useSpaceDirectoryStopped } from '@/lib/spaces/spaces-store';
+import { SpaceChatPlaceholder } from '@/components/session/spaces/SpaceChatPlaceholder';
 import { getRuntimeKey } from '@/lib/runtime-switch';
 import { isMobileSurfaceRuntime } from '@/lib/runtimeSurface';
 import { createFirstVisibleSessionPerformanceTracker } from '@/sync/session-load-performance';
@@ -763,7 +766,6 @@ const renderDraftTitle = (title: string, projectLabel: string | null): React.Rea
 };
 
 const DraftWelcome: React.FC<{ exiting?: boolean }> = ({ exiting = false }) => {
-    const { t } = useI18n();
     const draftTarget = useSessionUIStore((state) => state.newSessionDraft.target);
     const selectedProjectId = useSessionUIStore((state) => state.newSessionDraft.selectedProjectId ?? null);
     const projectLabel = useProjectsStore(React.useCallback((state) => {
@@ -774,6 +776,7 @@ const DraftWelcome: React.FC<{ exiting?: boolean }> = ({ exiting = false }) => {
             : null) ?? state.projects[0] ?? null;
         return project ? getProjectDisplayLabel(project) : null;
     }, [draftTarget, selectedProjectId]));
+    const draftHeading = useDraftHeading(projectLabel);
 
     return (
         <div className={cn(
@@ -781,12 +784,7 @@ const DraftWelcome: React.FC<{ exiting?: boolean }> = ({ exiting = false }) => {
             exiting && 'pointer-events-none opacity-0',
         )}>
             <h1 className="text-balance text-3xl font-normal tracking-tight text-foreground">
-                {renderDraftTitle(
-                    projectLabel
-                        ? t('chat.emptyState.draftTitleWithProject', { project: projectLabel })
-                        : t('chat.emptyState.draftTitle'),
-                    projectLabel,
-                )}
+                {renderDraftTitle(draftHeading, projectLabel)}
             </h1>
             <DraftPresetChips
                 onSubmit={(starter) => useInputStore.getState().requestPresetSubmit(starter.submitText, starter.ref.type)}
@@ -985,6 +983,9 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
         currentSessionId ?? '',
         effectiveSessionDirectory,
     );
+    // The messages of a space's session live inside the space: while it is stopped, gone or out
+    // of reach a load only waits for its timeout, so the chat holds it and says why instead.
+    const spaceStopped = useSpaceDirectoryStopped(effectiveSessionDirectory);
     const [firstVisiblePerformance] = React.useState(createFirstVisibleSessionPerformanceTracker);
 
     React.useEffect(() => {
@@ -1132,10 +1133,16 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
     const isDesktopExpandedInput = isExpandedInput;
     const useCompactDraftLayout = isMobile || isVSCode || chatSurfaceMode === 'mini-chat';
     // Work-status panel: a borderless column to the right of the transcript.
-    // It yields to the context panel and to a narrow chat; `rowRef` goes on the
-    // row that holds both columns, so its width never depends on the panel's
-    // own visibility.
-    const { rowRef: workStatusRowRef, visible: workStatusVisible, fits: workStatusFits, roomy: workStatusRoomy } = useWorkStatusVisibility({
+    // It yields to a narrow chat, and to the context panel unless the chat area
+    // fits both beside the transcript; `rowRef` goes on the row that holds both
+    // columns, so its width never depends on the panel's own visibility.
+    const {
+        rowRef: workStatusRowRef,
+        visible: workStatusVisible,
+        fits: workStatusFits,
+        roomy: workStatusRoomy,
+        roomyBesidePanel: workStatusRoomyBesidePanel,
+    } = useWorkStatusVisibility({
         isMobile,
         isVSCode,
     });
@@ -1601,9 +1608,18 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
 
     React.useEffect(() => {
         if (!active || !currentSessionId) return;
-        if (hasRenderableSessionSnapshot) return;
+        if (hasRenderableSessionSnapshot || spaceStopped) return;
         void ensureSessionRenderable(currentSessionId);
-    }, [currentSessionId, ensureSessionRenderable, hasRenderableSessionSnapshot, active]);
+    }, [currentSessionId, ensureSessionRenderable, hasRenderableSessionSnapshot, active, spaceStopped]);
+
+    // A space that runs again answers the load the chat held, or the one that failed while it
+    // was going down: the user waiting on its start sees the chat without a retry.
+    const wasSpaceStoppedRef = React.useRef(spaceStopped);
+    React.useEffect(() => {
+        const wasStopped = wasSpaceStoppedRef.current;
+        wasSpaceStoppedRef.current = spaceStopped;
+        if (wasStopped && !spaceStopped && !hasRenderableSessionSnapshot) retrySessionLoad();
+    }, [hasRenderableSessionSnapshot, retrySessionLoad, spaceStopped]);
 
     const composerSlotRef = React.useRef<HTMLDivElement | null>(null);
     // The slot mounts after the first commit (behind the session gate), so
@@ -1745,6 +1761,9 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
 
         const showHydrationSkeleton = isSessionHydrating && sessionMessages.length === 0 && !sessionIsWorking;
         if (showHydrationSkeleton) {
+            if (spaceStopped && effectiveSessionDirectory) {
+                return <SpaceChatPlaceholder directory={effectiveSessionDirectory} />;
+            }
             if (sessionMessageLoadState.status === 'error') {
                 return (
                     <div className="flex min-h-0 flex-1 items-center justify-center px-6">
@@ -2035,12 +2054,14 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
         </ChatColumnActionsContext.Provider>
         </ChatColumnSessionContext.Provider>
         {/* Kept mounted while it could ever show, so it can fade out and back
-            in; `visible` drives that, and `reserved` keeps its column in the
-            right slot while the context panel covers it. */}
+            in; `visible` drives that, `reserved` keeps its column in the right
+            slot while the context panel covers it, and `besidePanel` keeps it
+            beside the open panel. */}
         {workStatusPanelMountable && workStatusHost ? createPortal(
             <WorkStatusPanel
                 visible={showWorkStatusPanel}
                 reserved={workStatusReserved}
+                besidePanel={workStatusRoomyBesidePanel}
                 sessionId={currentSessionId ?? null}
                 directory={workStatusDirectory ?? null}
                 repositoryEnabled={!isManagedChatContext}

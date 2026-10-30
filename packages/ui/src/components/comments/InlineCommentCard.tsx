@@ -55,8 +55,9 @@ export function InlineCommentCard({
         <span className="min-w-0 max-w-[200px] truncate text-xs font-medium text-foreground" title={draft.fileLabel}>
           {draft.fileLabel}
         </span>
-        <span className="text-xs text-muted-foreground">•</span>
-        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+        <span className="shrink-0 text-xs text-muted-foreground">•</span>
+        {/* "Whole file" is short and never shrinks, so a narrow panel truncates the path instead. */}
+        <span className={cn('me-auto text-xs text-muted-foreground', isWholeFileComment(draft) ? 'shrink-0' : 'min-w-0 truncate')}>
           {isWholeFileComment(draft)
             ? t('inlineComment.range.wholeFile')
             : <>{t('inlineComment.range.lines', { start: draft.startLine, end: draft.endLine })}{draft.side ? ` (${draft.side})` : ''}</>}

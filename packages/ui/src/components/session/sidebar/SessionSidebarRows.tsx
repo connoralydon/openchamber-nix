@@ -16,6 +16,7 @@ import {
   getInitialSessionSidebarRowIndexes,
   mergeSessionSidebarVirtualIndexes,
   sectionSpacingAfter,
+  sectionWrapperClass,
   sessionSidebarRowSizeKey,
   sessionSidebarRowVirtualKey,
 } from './sessionSidebarVirtualization';
@@ -249,7 +250,7 @@ export function SessionSidebarRows({
     return <div data-sidebar-virtual-pending="true">
       {indexes.map((index) => {
         const row = rows[index];
-        return row ? <div key={row.key} className={sectionSpacingAfter(row, rows[index + 1])}>{renderRowWithGuides(row, index)}</div> : null;
+        return row ? <div key={row.key} className={sectionWrapperClass(row, rows[index + 1])}>{renderRowWithGuides(row, index)}</div> : null;
       })}
       {estimatedTotal > renderedHeight ? <div aria-hidden="true" style={{ height: estimatedTotal - renderedHeight }} /> : null}
     </div>;
@@ -261,7 +262,7 @@ export function SessionSidebarRows({
       key={ghost.row.key}
       aria-hidden="true"
       inert
-      className={`[&_[data-session-row-box]]:my-px ${sectionSpacingAfter(ghost.row, ghost.nextRow) ?? ''}`}
+      className={`[&_[data-session-row-box]]:my-px ${sectionWrapperClass(ghost.row, ghost.nextRow)}`}
       data-sidebar-ghost="true"
       data-sidebar-row-key={ghost.row.key}
       data-sidebar-virtual-start={ghost.start}
@@ -283,7 +284,7 @@ export function SessionSidebarRows({
         key={row.key}
         // Isolated virtual rows cannot collapse neighboring margins: 1px per side preserves the 2px gap.
         // The row box, not the row: a session row in rename keeps the same margins.
-        className={`[&_[data-session-row-box]]:my-px ${sectionSpacingAfter(row, rows[item.index + 1]) ?? ''}`}
+        className={`[&_[data-session-row-box]]:my-px ${sectionWrapperClass(row, rows[item.index + 1])}`}
         data-index={item.index}
         data-sidebar-row-key={row.key}
         data-sidebar-virtual-start={item.start}

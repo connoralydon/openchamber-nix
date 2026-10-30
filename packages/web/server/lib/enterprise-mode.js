@@ -56,6 +56,9 @@ import { z } from 'zod';
  * - The integrations catalog, a bundled list of outside services to install,
  *   is hidden (`packages/ui` SidebarHeader); administrator-curated sources for
  *   it do not exist yet. MCP, plugin and skill entry in Settings is unchanged.
+ * - The agent image tool (`openchamber-control/generate-image.js`) is not
+ *   gated: it reaches an image model through OpenCode, so `provider.use`
+ *   covers it like any other provider (maintainer decision, 2026-10-27).
  * - The Settings card that installs the Claude Code plugin, a model provider,
  *   is hidden (`packages/ui` IntegrationsPage). The plugin itself is not
  *   refused: OpenCode's `provider.use` policy covers `claude-code` like any

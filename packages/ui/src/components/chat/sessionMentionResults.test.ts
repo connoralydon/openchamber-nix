@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import type { Session } from '@/lib/opencode/model';
-import { rankSessionMentions } from './sessionMentionResults';
+import { hasSessionMention, rankSessionMentions } from './sessionMentionResults';
 
 // SAFETY: sessions as the global store holds them; ranking reads id, parent, title, directory and time.
 const session = (id: string, title: string, directory: string, updated: number, extra: Partial<Session> = {}): Session => ({
@@ -25,5 +25,18 @@ describe('session mentions', () => {
   test('finds by title across projects, the open project first, without the current session or subagent runs', () => {
     const found = rankSessionMentions(sessions, 'tweet', { currentSessionId: 'ses_now', projectRoot: '/work/app' });
     expect(found.map((entry) => entry.id)).toEqual(['ses_3', 'ses_2', 'ses_1']);
+  });
+
+  test('finds a title by several of its words', () => {
+    const found = rankSessionMentions(sessions, 'tweet ideas', { currentSessionId: null, projectRoot: '/work/app' });
+    expect(found.map((entry) => entry.id)).toEqual(['ses_2']);
+  });
+
+  test('hasSessionMention agrees with the ranking on what can be listed', () => {
+    expect(hasSessionMention(sessions, 'release notes', null)).toBe(true);
+    expect(hasSessionMention(sessions, 'release notes are', null)).toBe(false);
+    expect(hasSessionMention(sessions, 'tweet subagent', null)).toBe(false);
+    expect(hasSessionMention(sessions, 'tweet current', 'ses_now')).toBe(false);
+    expect(hasSessionMention(sessions, ' ', null)).toBe(false);
   });
 });

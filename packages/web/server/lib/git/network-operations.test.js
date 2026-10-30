@@ -1567,11 +1567,53 @@ process.exit(safe ? 0 : 1);
     const result = await setupValue.service.execute(plan.operationId);
 
     expect(result.state).toBe('succeeded');
-    expect(setupValue.calls).toHaveLength(2);
-    expect(setupValue.calls[0].args.slice(-4)).toEqual([
+    expect(setupValue.calls).toHaveLength(3);
+    expect(setupValue.calls[0].args.slice(-5)).toEqual(['ls-remote', '--symref', '--', ENDPOINT, 'HEAD']);
+    expect(setupValue.calls[1].args.slice(-4)).toEqual([
       'push', '--', ENDPOINT, ':refs/heads/published',
     ]);
-    expect(setupValue.calls[1].args.slice(-3)).toEqual(['update-ref', '-d', 'refs/remotes/publish/published']);
+    expect(setupValue.calls[2].args.slice(-3)).toEqual(['update-ref', '-d', 'refs/remotes/publish/published']);
+  });
+
+  it('asks for the remote default branch on a credential lease of its own', async () => {
+    const setupValue = setup();
+    const revoked = [];
+    let issued = 0;
+    setupValue.credentialBroker.issue.mockImplementation(() => {
+      const lease = ++issued;
+      return { gitConfigArgs: ['-c', `credential.helper=!broker nonce-${lease}`], revoke: vi.fn(() => { revoked.push(lease); }) };
+    });
+    const input = request();
+    delete input.sourceRef;
+    input.operation = 'delete-remote-branch';
+    const plan = await setupValue.service.plan(input);
+
+    const result = await setupValue.service.execute(plan.operationId);
+
+    expect(result.state).toBe('succeeded');
+    const probe = setupValue.calls.find((call) => call.args.includes('ls-remote'));
+    const push = setupValue.calls.find((call) => call.args.includes('push'));
+    expect(probe.args).toContain('credential.helper=!broker nonce-1');
+    expect(push.args).toContain('credential.helper=!broker nonce-2');
+    expect(revoked).toEqual([1, 2]);
+  });
+
+  it('refuses to delete the branch the remote names as its default', async () => {
+    const setupValue = setup({
+      spawnResponder: (call) => (call.args.includes('ls-remote')
+        ? { code: 0, stdout: `ref: refs/heads/published\tHEAD\n${SHA}\tHEAD\n` }
+        : undefined),
+    });
+    const input = request();
+    delete input.sourceRef;
+    input.operation = 'delete-remote-branch';
+    const plan = await setupValue.service.plan(input);
+
+    const result = await setupValue.service.execute(plan.operationId);
+
+    expect(result.state).toBe('failed');
+    expect(result.error).toEqual({ code: 'INVALID_REQUEST', message: "The remote's default branch can't be deleted" });
+    expect(setupValue.calls.some((call) => call.args.includes('push'))).toBe(false);
   });
 
   it('resets each discovered CA and client certificate setting by its exact key', async () => {

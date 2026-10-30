@@ -1,7 +1,8 @@
 import type { Session } from '@/lib/opencode/model';
 import type { I18nKey } from '@/lib/i18n';
 import { toast } from '@/components/ui';
-import { checkIsGitRepository, getGitStatus } from '@/lib/gitApi';
+import { checkIsGitRepository, getGitStatus, setGitWorktreeTitle } from '@/lib/gitApi';
+import { hasWorkTitle } from '@/lib/sessionWorkTitle';
 import { normalizePath } from '@/lib/pathNormalization';
 import { createQuickWorktree, resolveFolderProjectRef, resolveProjectRef } from '@/lib/worktreeSessionCreator';
 import { getLatestWorktreeMetadata, removeProjectWorktree, type ProjectRef } from '@/lib/worktrees/worktreeManager';
@@ -329,7 +330,7 @@ const moveSessionTreeToQuickWorktree = async (input: {
   descendants: Session[];
   sourceDirectory: string;
 }): Promise<string> => {
-  return moveSessionTreeTransaction(input, async () => {
+  const directory = await moveSessionTreeTransaction(input, async () => {
     const project = resolveProjectRef(input.sourceDirectory);
     if (!project) throw new Error('Unable to find the project for this session');
 
@@ -356,6 +357,16 @@ const moveSessionTreeToQuickWorktree = async (input: {
       onMoveFailure: async (error) => removeFailedWorktree(project, worktree, error),
     };
   });
+  // A named task keeps its name in the new worktree, whose row would otherwise
+  // show the bare placeholder branch: the agent does not name a task twice.
+  // Any folder of the worktree names its branch.
+  const taskTitle = input.root.title?.trim();
+  if (taskTitle && hasWorkTitle(input.root.metadata)) {
+    await setGitWorktreeTitle(directory, taskTitle).catch((error) => {
+      console.warn('[session-worktree-move] Failed to carry the task name into the new worktree', error);
+    });
+  }
+  return directory;
 };
 
 const executeSessionTreeMove = (intent: SessionTreeMoveIntent): void => {

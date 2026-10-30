@@ -8,7 +8,7 @@ import { SEMANTIC_TYPOGRAPHY, getTypographyVariable, type SemanticTypographyKey 
 import type { ShortcutCombo } from '@/lib/shortcuts';
 import type { DraftStarterRef } from '@/lib/draftStarters';
 import type { CustomProviderIcon } from '@/lib/customProviderIcons';
-import { DEFAULT_MONO_FONT, DEFAULT_UI_FONT, type MonoFontOption, type UiFontOption } from '@/lib/fontOptions';
+import { DEFAULT_MONO_FONT, DEFAULT_UI_FONT, DEFAULT_UI_FONT_WEIGHT, type MonoFontOption, type UiFontOption, type UiFontWeight } from '@/lib/fontOptions';
 import { getStoredMobileKeyboardMode, type MobileKeyboardMode } from '@/lib/mobileKeyboardMode';
 import type { TerminalShell } from '@/lib/api/types';
 import type { PermissionMode } from './utils/permissionAutoAccept';
@@ -1048,12 +1048,16 @@ interface UIStore {
   terminalFontSize: number;
   terminalShell: TerminalShell;
   terminalLoginShells: TerminalShell[];
+  /** A terminal or project action tab closes when its process exits; off keeps the exited output. */
+  terminalCloseOnExit: boolean;
   editorFontSize: number;
   uiFont: UiFontOption;
   monoFont: MonoFontOption;
   /** Family names used when `uiFont` / `monoFont` is `custom`. */
   customUiFont: string;
   customMonoFont: string;
+  /** Weight of regular interface text. */
+  uiFontWeight: UiFontWeight;
   padding: number;
   cornerRadius: number;
   inputBarOffset: number;
@@ -1115,6 +1119,8 @@ interface UIStore {
   showTerminalQuickKeysOnDesktop: boolean;
   /** Header session tabs (web/desktop), opt-in. Off keeps the plain session title. */
   sessionTabsEnabled: boolean;
+  /** Separate header tabs for each project root, worktree and space (`lib/sessionTabScope.ts`). */
+  sessionTabsPerWorkspace: boolean;
   showOpenCodeUpdateNotifications: boolean;
   agentControlToolEnabled: boolean;
   agentScheduleToolEnabled: boolean;
@@ -1128,6 +1134,9 @@ interface UIStore {
   agentMemoryToolEnabled: boolean;
   agentKnowledgeToolEnabled: boolean;
   agentNotifyToolEnabled: boolean;
+  agentImageToolEnabled: boolean;
+  /** `provider/model` the image tool draws with; empty until the user picks one. */
+  agentImageModel: string;
   agentRenderToolEnabled: boolean;
   agentWorkflowToolEnabled: boolean;
   /** Whether OpenChamber's agent tools sit behind OpenCode's Code Mode instead of being direct tools. */
@@ -1347,11 +1356,13 @@ interface UIStore {
   setTerminalFontSize: (size: number) => void;
   setTerminalShell: (shell: TerminalShell) => void;
   setTerminalLoginShells: (shells: TerminalShell[]) => void;
+  setTerminalCloseOnExit: (value: boolean) => void;
   setEditorFontSize: (size: number) => void;
   setUiFont: (font: UiFontOption) => void;
   setMonoFont: (font: MonoFontOption) => void;
   setCustomUiFont: (family: string) => void;
   setCustomMonoFont: (family: string) => void;
+  setUiFontWeight: (weight: UiFontWeight) => void;
   setPadding: (size: number) => void;
   setCornerRadius: (radius: number) => void;
   setInputBarOffset: (offset: number) => void;
@@ -1399,6 +1410,7 @@ interface UIStore {
   setNotificationMode: (mode: 'always' | 'hidden-only') => void;
   setShowTerminalQuickKeysOnDesktop: (value: boolean) => void;
   setSessionTabsEnabled: (value: boolean) => void;
+  setSessionTabsPerWorkspace: (value: boolean) => void;
   setNotifyOnSubtasks: (value: boolean) => void;
   setDockBadgeEnabled: (value: boolean) => void;
   setAlwaysShowScrollbars: (value: boolean) => void;
@@ -1422,6 +1434,8 @@ interface UIStore {
   setAgentMemoryToolEnabled: (value: boolean) => void;
   setAgentKnowledgeToolEnabled: (value: boolean) => void;
   setAgentNotifyToolEnabled: (value: boolean) => void;
+  setAgentImageToolEnabled: (value: boolean) => void;
+  setAgentImageModel: (value: string) => void;
   setAgentRenderToolEnabled: (value: boolean) => void;
   setAgentWorkflowToolEnabled: (value: boolean) => void;
   setAgentToolsCodeMode: (value: boolean) => void;
@@ -1595,11 +1609,13 @@ export const useUIStore = create<UIStore>()(
         terminalFontSize: 14,
         terminalShell: 'auto',
         terminalLoginShells: [],
+        terminalCloseOnExit: true,
         editorFontSize: 13,
         uiFont: DEFAULT_UI_FONT,
         monoFont: DEFAULT_MONO_FONT,
         customUiFont: '',
         customMonoFont: '',
+        uiFontWeight: DEFAULT_UI_FONT_WEIGHT,
         padding: 100,
         cornerRadius: 18,
         inputBarOffset: 0,
@@ -1651,6 +1667,7 @@ export const useUIStore = create<UIStore>()(
 
         showTerminalQuickKeysOnDesktop: false,
         sessionTabsEnabled: false,
+        sessionTabsPerWorkspace: false,
         showOpenCodeUpdateNotifications: true,
         agentControlToolEnabled: true,
         agentScheduleToolEnabled: true,
@@ -1661,6 +1678,8 @@ export const useUIStore = create<UIStore>()(
         agentMemoryToolEnabled: false,
         agentKnowledgeToolEnabled: true,
         agentNotifyToolEnabled: false,
+        agentImageToolEnabled: false,
+        agentImageModel: '',
         agentRenderToolEnabled: true,
         agentWorkflowToolEnabled: true,
         agentToolsCodeMode: false,
@@ -2780,6 +2799,10 @@ export const useUIStore = create<UIStore>()(
           set({ terminalLoginShells: [...new Set(shells)] });
         },
 
+        setTerminalCloseOnExit: (value) => {
+          set({ terminalCloseOnExit: value });
+        },
+
         setEditorFontSize: (size) => {
           const rounded = Math.round(size);
           const clamped = Math.max(9, Math.min(32, rounded));
@@ -2800,6 +2823,10 @@ export const useUIStore = create<UIStore>()(
 
         setCustomMonoFont: (family) => {
           set({ customMonoFont: family.slice(0, 100) });
+        },
+
+        setUiFontWeight: (weight) => {
+          set({ uiFontWeight: weight });
         },
 
         setPadding: (size) => {
@@ -3217,6 +3244,10 @@ export const useUIStore = create<UIStore>()(
           set({ sessionTabsEnabled: value });
         },
 
+        setSessionTabsPerWorkspace: (value) => {
+          set({ sessionTabsPerWorkspace: value });
+        },
+
         setNotifyOnSubtasks: (value) => {
           set({ notifyOnSubtasks: value });
         },
@@ -3277,6 +3308,12 @@ export const useUIStore = create<UIStore>()(
         },
         setAgentNotifyToolEnabled: (value) => {
           set({ agentNotifyToolEnabled: value });
+        },
+        setAgentImageToolEnabled: (value) => {
+          set({ agentImageToolEnabled: value });
+        },
+        setAgentImageModel: (value) => {
+          set({ agentImageModel: value });
         },
         setAgentRenderToolEnabled: (value) => {
           set({ agentRenderToolEnabled: value });
@@ -3775,11 +3812,13 @@ export const useUIStore = create<UIStore>()(
           terminalFontSize: state.terminalFontSize,
           terminalShell: state.terminalShell,
           terminalLoginShells: state.terminalLoginShells,
+          terminalCloseOnExit: state.terminalCloseOnExit,
           editorFontSize: state.editorFontSize,
           uiFont: state.uiFont,
           monoFont: state.monoFont,
           customUiFont: state.customUiFont,
           customMonoFont: state.customMonoFont,
+          uiFontWeight: state.uiFontWeight,
           padding: state.padding,
           cornerRadius: state.cornerRadius,
           favoriteModels: state.favoriteModels,
@@ -3804,6 +3843,7 @@ export const useUIStore = create<UIStore>()(
           notificationMode: state.notificationMode,
           showTerminalQuickKeysOnDesktop: state.showTerminalQuickKeysOnDesktop,
           sessionTabsEnabled: state.sessionTabsEnabled,
+          sessionTabsPerWorkspace: state.sessionTabsPerWorkspace,
           notifyOnSubtasks: state.notifyOnSubtasks,
           dockBadgeEnabled: state.dockBadgeEnabled,
           alwaysShowScrollbars: state.alwaysShowScrollbars,
@@ -3825,6 +3865,8 @@ export const useUIStore = create<UIStore>()(
           agentMemoryToolEnabled: state.agentMemoryToolEnabled,
           agentKnowledgeToolEnabled: state.agentKnowledgeToolEnabled,
           agentNotifyToolEnabled: state.agentNotifyToolEnabled,
+          agentImageToolEnabled: state.agentImageToolEnabled,
+          agentImageModel: state.agentImageModel,
           agentRenderToolEnabled: state.agentRenderToolEnabled,
           agentWorkflowToolEnabled: state.agentWorkflowToolEnabled,
           agentToolsCodeMode: state.agentToolsCodeMode,

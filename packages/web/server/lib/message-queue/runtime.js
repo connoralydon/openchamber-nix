@@ -37,10 +37,6 @@ const ABORT_HOLD_MS = 2_000;
 const SUBAGENT_RECHECK_MS = 5_000;
 const RETRY_BASE_DELAY_MS = 2_000;
 const RETRY_MAX_DELAY_MS = 60_000;
-// A hold is asserted by a UI-driven process (auto-review) that dies with the
-// UI; it expires unless the UI keeps re-asserting it.
-const HOLD_DEFAULT_TTL_MS = 5 * 60 * 1000;
-const HOLD_MAX_TTL_MS = 10 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 15_000;
 const MESSAGE_TAIL_LIMIT = 2;
 
@@ -266,6 +262,11 @@ export function createMessageQueueRuntime({
   resolveAutoSelection = null,
   // Saves the goal record of a message queued as a goal (the session metadata store).
   persistSessionGoal = null,
+  // True while something else drives the session (an auto-review run), which
+  // calls `release` when it is done. `deliveryHoldReady` resolves once that
+  // owner knows which sessions it holds; the first dispatch waits for it.
+  isDeliveryHeld = () => false,
+  deliveryHoldReady = Promise.resolve(),
   dataDir,
   fetchImpl = fetch,
   now = Date.now,
@@ -294,7 +295,6 @@ export function createMessageQueueRuntime({
   const timers = new Map(); // sessionId → timeout
   const failures = new Map(); // sessionId → { itemId, failures, nextAttemptAt }
   const abortedAt = new Map(); // sessionId → timestamp
-  const holds = new Map(); // sessionId → expiresAt
   // sessionId → directory, kept after the queue empties: the UI keys its
   // projection by directory, so the broadcast that removes the last item must
   // still name it or the client cannot tell which queue just finished.
@@ -658,18 +658,10 @@ export function createMessageQueueRuntime({
     timers.set(sessionId, timer);
   };
 
-  const isHeld = (sessionId) => {
-    const expiresAt = holds.get(sessionId);
-    if (expiresAt === undefined) return false;
-    if (expiresAt > now()) return true;
-    holds.delete(sessionId);
-    return false;
-  };
-
   async function tick(sessionId) {
     if (stopped) return;
     const queue = queues.get(sessionId);
-    if (!queue || queue.items.length === 0 || sending.has(sessionId) || isHeld(sessionId)) return;
+    if (!queue || queue.items.length === 0 || sending.has(sessionId) || isDeliveryHeld(sessionId)) return;
 
     const abortHoldUntil = (abortedAt.get(sessionId) ?? 0) + abortHoldMs;
     if (abortHoldUntil > now()) {
@@ -885,18 +877,9 @@ export function createMessageQueueRuntime({
     return commit(sessionId);
   };
 
-  const setHold = (sessionIdInput, held, ttlMs = HOLD_DEFAULT_TTL_MS) => {
-    const sessionId = requireSessionId(sessionIdInput);
-    if (held !== true && held !== false) throw new TypeError('held must be a boolean');
-    if (held) {
-      const ttl = Math.min(asCount(ttlMs) || HOLD_DEFAULT_TTL_MS, HOLD_MAX_TTL_MS);
-      holds.set(sessionId, now() + ttl);
-      clearTimer(sessionId);
-      return { held: true, expiresAt: holds.get(sessionId) };
-    }
-    holds.delete(sessionId);
+  /** What held the session's delivery let go: deliver whatever waited. */
+  const release = (sessionId) => {
     armDispatch(sessionId);
-    return { held: false, expiresAt: null };
   };
 
   // --- events --------------------------------------------------------------
@@ -949,8 +932,10 @@ export function createMessageQueueRuntime({
       if (status?.type === 'connect') reconcileAll();
     });
     void load()
-      .then(() => {
+      .then(async () => {
         if (queues.size > 0) console.log(`[message-queue] restored queues for ${queues.size} session(s)`);
+        // A tick that ran before this saw every session held and armed nothing.
+        await deliveryHoldReady;
         reconcileAll();
       })
       .catch((error) => {
@@ -990,7 +975,7 @@ export function createMessageQueueRuntime({
     takeAll,
     reorder,
     clear,
-    setHold,
+    release,
     processPayload,
     start,
     stop,
@@ -1036,15 +1021,6 @@ export function registerMessageQueueRoutes(app, runtime) {
       res.json(await runtime.reorder(req.params.sessionId, req.body?.itemIds));
     } catch (error) {
       respondError(res, error, 'Failed to reorder queue');
-    }
-  });
-
-  app.put('/api/message-queue/sessions/:sessionId/hold', async (req, res) => {
-    try {
-      await runtime.load();
-      res.json(runtime.setHold(req.params.sessionId, req.body?.held, req.body?.ttlMs));
-    } catch (error) {
-      respondError(res, error, 'Failed to update queue hold');
     }
   });
 

@@ -4,7 +4,6 @@ import {
   DragOverlay,
   MouseSensor,
   TouchSensor,
-  closestCenter,
   useSensor,
   useSensors,
   useDraggable,
@@ -12,12 +11,31 @@ import {
   type DragEndEvent,
 } from '@dnd-kit/core';
 import { Icon } from "@/components/icon/Icon";
+import { sessionFolderCollision } from './sessionFolderCollision';
 import { getSessionFolderIdentityKey, isArchivedFolderScope } from '../sessions/sessionFolderIdentity';
 
 type SessionFolderDropTarget = {
   folderId: string;
   scopeKey: string;
   ownerKey: string;
+};
+
+/**
+ * The folder owners that have a folder a session can be dropped into. A row
+ * whose owner has none does not drag at all: a drag with nowhere to land only
+ * swallowed the click that started it. Without a provider every row drags.
+ */
+const SessionFolderOwnersContext = React.createContext<ReadonlySet<string> | null>(null);
+
+export const SessionFolderOwnersProvider: React.FC<{
+  ownerKeys: readonly string[];
+  children: React.ReactNode;
+}> = ({ ownerKeys, children }) => {
+  // Keyed by content: the row model is rebuilt often, and a new set each time
+  // would re-render every draggable row.
+  const ownersKey = [...new Set(ownerKeys)].sort().join('\n');
+  const owners = React.useMemo(() => new Set(ownersKey ? ownersKey.split('\n') : []), [ownersKey]);
+  return <SessionFolderOwnersContext.Provider value={owners}>{children}</SessionFolderOwnersContext.Provider>;
 };
 
 export const DraggableSessionRow: React.FC<{
@@ -29,9 +47,11 @@ export const DraggableSessionRow: React.FC<{
   archivedBucket?: boolean;
   children: React.ReactNode;
 }> = ({ sessionId, dragKey, ownerKey = null, sessionDirectory, sessionTitle, archivedBucket = false, children }) => {
+  const folderOwners = React.useContext(SessionFolderOwnersContext);
+  const hasFolderToDropInto = folderOwners === null || (ownerKey !== null && folderOwners.has(ownerKey));
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `session-drag:${dragKey ?? sessionId}`,
-    disabled: archivedBucket,
+    disabled: archivedBucket || !hasFolderToDropInto,
     data: { type: 'session', sessionId, ownerKey, sessionDirectory, sessionTitle, archivedBucket },
   });
 
@@ -130,7 +150,7 @@ export const SessionFolderDndScope: React.FC<{
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCenter}
+      collisionDetection={sessionFolderCollision}
       onDragStart={(event) => {
         // SAFETY: drag payloads are created by DraggableSessionRow in this module.
         const data = event.active.data.current as { type?: string; sessionId?: string; sessionTitle?: string } | undefined;

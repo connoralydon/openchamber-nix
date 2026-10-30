@@ -5,13 +5,12 @@ import { Spinner } from '@/components/ui/spinner';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { isDesktopLocalOriginActive, revealDesktopPath } from '@/lib/desktop';
 import { useI18n } from '@/lib/i18n';
-import { OpencodeApiError, opencodeClient } from '@/lib/opencode/client';
+import { opencodeClient } from '@/lib/opencode/client';
 
 type SnapshotState =
   | { kind: 'idle' }
   | { kind: 'writing' }
   | { kind: 'written'; path: string }
-  | { kind: 'unsupported' }
   | { kind: 'failed' };
 
 /**
@@ -28,9 +27,8 @@ export const OpenCodeHeapSnapshot: React.FC = () => {
     try {
       const { path } = await opencodeClient.writeHeapSnapshot();
       setState({ kind: 'written', path });
-    } catch (error) {
-      // OpenCode before 2.1.4 has no such route.
-      setState(error instanceof OpencodeApiError && error.status === 404 ? { kind: 'unsupported' } : { kind: 'failed' });
+    } catch {
+      setState({ kind: 'failed' });
     }
   }, []);
 
@@ -49,7 +47,6 @@ export const OpenCodeHeapSnapshot: React.FC = () => {
       case 'idle': return t('openCodeStatusDialog.heapSnapshot.hint');
       case 'writing': return t('openCodeStatusDialog.heapSnapshot.writing');
       case 'written': return t('openCodeStatusDialog.heapSnapshot.written', { path: state.path });
-      case 'unsupported': return t('openCodeStatusDialog.heapSnapshot.unsupported');
       case 'failed': return t('openCodeStatusDialog.heapSnapshot.failed');
     }
   })();

@@ -42,9 +42,11 @@ export const ZEN_JEV_MODEL = 'jev-1.13-free';
 export const ZEN_CLIENT_ID = 'openchamber';
 
 /**
- * Whether the free promotion is still on. When OpenCode ends it, flip this and
- * the promotion stops being offered; users keep Jev through a Zen or TypeSafe
- * key, or lose the safety net and Auto until they add one.
+ * Whether the free promotion can be used. While false it is not offered; users
+ * keep Jev through a key, or lose the safety net and Auto until they add one.
+ *
+ * See DOCUMENTATION.md for the 2026-10-27 outage that turned it off for a
+ * few hours.
  */
 export const ZEN_JEV_PROMOTION_ACTIVE = true;
 

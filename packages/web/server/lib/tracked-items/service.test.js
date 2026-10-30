@@ -106,6 +106,28 @@ describe('tracked items service', () => {
     expect(calls.github).toHaveLength(3);
   });
 
+  it('refreshes what a server module follows with no window open, and tells it what moved', async () => {
+    let checks = { state: 'pending', total: 1, success: 0, failure: 0, pending: 1 };
+    const { service, sent, calls } = setup({
+      readers: { github: async (input) => ({ status: 'ok', pulls: input.pulls.map((ref) => pullSummary(ref, 'open', { checks })), issues: [], discussions: [] }) },
+    });
+    const heard = [];
+    service.subscribe((states) => heard.push(...states.map((state) => state.state.checks.state)));
+    service.setServerInterest('pr-watch', itemsOf(githubPull(5)));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls.github).toHaveLength(1);
+    expect(heard).toEqual(['pending']);
+
+    checks = { state: 'success', total: 1, success: 1, failure: 0, pending: 0 };
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(heard).toEqual(['pending', 'success']);
+    expect(sent).toEqual([]);
+
+    service.setServerInterest('pr-watch', new Map());
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(calls.github).toHaveLength(2);
+  });
+
   it('keeps the last known state through a failed read and backs off before asking again', async () => {
     let fail = false;
     const { service, sent, calls } = setup({

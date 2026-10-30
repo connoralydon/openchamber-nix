@@ -38,6 +38,8 @@ export interface TriggerContext {
     inputSource?: FileMentionAutocompleteInputSource;
     /** The text that change inserted, when known. */
     insertedText?: string;
+    /** Keeps an `@` query open past a space while it still names a session. */
+    mentionContinuesPastSpace?: (query: string) => boolean;
 }
 
 /**
@@ -133,6 +135,7 @@ function matchMention(
         cursorPosition,
         inputSource: context.inputSource,
         insertedText: context.insertedText,
+        continuesPastSpace: context.mentionContinuesPastSpace,
     });
     return query === null ? null : { kind: 'mention', query };
 }

@@ -1,5 +1,6 @@
 import { readOpenCodeCredentials } from '../../opencode/auth.js';
 import { deleteLegacyOpenCodeGoCredential } from '../credentials/store.js';
+import { readConsoleBudgets, withConsoleBudgets } from '../console-budgets.js';
 import {
   asNonEmptyString,
   asObject,
@@ -281,7 +282,7 @@ const getConsoleCredential = (auth) => {
 
 export const isConfigured = (auth) => Boolean(getConsoleCredential(auth) || getApiKey(auth));
 
-export const fetchQuota = async ({ readAuth = readOpenCodeCredentials, fetchImpl = fetch } = {}) => {
+const fetchGoQuota = async ({ readAuth = readOpenCodeCredentials, fetchImpl = fetch } = {}) => {
   try {
     deleteLegacyOpenCodeGoCredential();
     const auth = await readAuth();
@@ -328,4 +329,10 @@ export const fetchQuota = async ({ readAuth = readOpenCodeCredentials, fetchImpl
   } catch (error) {
     return buildResult({ providerId, providerName, ok: false, configured: true, error: error instanceof Error ? error.message : 'Request failed' });
   }
+};
+
+/** The Go meters, with the Console budgets the same sign-in has read beside them. */
+export const fetchQuota = async ({ readBudgets = readConsoleBudgets, ...options } = {}) => {
+  const [result, consoleBudgets] = await Promise.all([fetchGoQuota(options), readBudgets()]);
+  return withConsoleBudgets(result, consoleBudgets);
 };

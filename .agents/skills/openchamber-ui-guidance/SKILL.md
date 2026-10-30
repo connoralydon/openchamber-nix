@@ -34,10 +34,10 @@ The app has one rule for depth, and every surface follows from it:
 - **A line means something.** Draw one only where it carries meaning: a
   section divider, a dashed empty slot ("Add …"), the drop target while
   dragging, the frame of a large code canvas (Files panes, a diff) that would
-  otherwise merge with the page. Decoration is never a reason.
+  otherwise merge with the page.
 - **Floating is glass plus light.** Menus, popovers, autocompletes, the
   selection and quote menus, floating comment fields: blur behind, lit top
-  edge, hairline, layered shadow, the same look as a dropdown. Surfaces always on screen
+  line, hairline, layered shadow, the same look as a dropdown. Surfaces always on screen
   over the moving transcript (the composer, status pills) are opaque with the
   same light, never blurred.
 - **Status speaks through fill.** A banner or error box is a tinted fill with
@@ -45,12 +45,8 @@ The app has one rule for depth, and every surface follows from it:
 - **Focus draws no ring.** A focused control takes the hover fill; a focused
   field brightens its own edge.
 
-Light and dark themes differ on purpose: light themes paint the elevated
-surface darker than the canvas, so a raised control takes the canvas colour
-there and a text field reads pressed into the page. Which class gives each of
-these, and the traps that silently undo them, is in
-[references/surfaces.md](references/surfaces.md); read it before styling any
-surface or control.
+Which class gives each of these, and the traps that silently undo them, is in
+[references/surfaces.md](references/surfaces.md); read it before styling any surface or control.
 
 ## Stability: interaction moves only what it touches
 
@@ -84,7 +80,7 @@ Using a control must not shift anything the user did not touch.
   off and takes its side from `usePopupSideOnOpen` (`components/ui/popup-side.ts`),
   with its search field on the trigger's edge. The composer's model and agent
   menus are a known exception: their search stays at the top when they open
-  upward. Check every popup in the smallest window that shows it.
+  upward.
 
 ## Vertical space: content gets the height
 
@@ -125,6 +121,8 @@ is the expected shape, and for canvases (editors, diffs, transcripts). A
 segmented choice of two options stretched across a pane reads as two empty
 bars.
 
+Controls in one row share one height.
+
 ## Composition
 
 - **Icons sit in the line they label.** A decorative or kind icon goes inline at
@@ -148,18 +146,21 @@ bars.
   label does not say. Explanations go behind an info hint, warnings and status
   stay visible (`settings-ui-patterns` owns the Settings policy). Wording rules
   are in `locale-ui-patterns` and `communication-style`.
-- **Readable secondary text.** Secondary text is muted, still comfortably
-  legible; never muted text on a muted fill, or a list whose every line is grey.
+- **Readable secondary text.** Secondary text is `text-muted-foreground` at
+  full strength, never a fraction of it (`/50`, `/70`): every theme keeps the
+  muted colour at 4.5:1, and an opacity on top drops it below. A quieter step
+  between body and muted text mixes the two instead: `oc-title-rest` for a
+  list title at rest, `oc-group-label` for a container's label. Only text
+  nobody needs to read may fade: separators (`·`, `/`), disabled controls,
+  calendar days outside the month, large empty-state illustrations. Never
+  muted text on a muted fill, or a list whose every line is grey.
 - **Dense, not cramped.** Rows are compact; tap targets meet the mobile touch
   floor; text never drops below the typography scale for density's sake.
 
 ## States
 
-- Hover fills only what is clickable. Text-like buttons and list rows show
-  hover by colour (text at 80% turning full) rather than a fill; sidebar
-  session rows are the exception and keep their faint fill.
-- Selection uses the selection tokens; primary colour means "act", never
-  "chosen".
+- Text-like buttons and list rows show hover by colour (text at 80% turning
+  full); sidebar session rows are the exception and keep their faint fill.
 - Tooltips on dense rows open above their element so they never cover the
   neighbouring actions.
 

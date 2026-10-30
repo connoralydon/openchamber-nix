@@ -11,6 +11,7 @@ import { Icon } from "@/components/icon/Icon";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from '@/lib/utils';
 import type { UpdateInfo, UpdateProgress } from '@/lib/desktop';
+import { updateProgressPercent } from './updateProgress';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { openExternalUrl } from '@/lib/url';
 import { getCurrentIntlLocale, useI18n } from '@/lib/i18n';
@@ -137,9 +138,7 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
     : GITHUB_RELEASES_URL;
   const mobileUpdateUrl = info?.downloadUrl || releaseUrl;
 
-  const progressPercent = progress?.total
-    ? Math.round((progress.downloaded / progress.total) * 100)
-    : 0;
+  const progressPercent = updateProgressPercent(progress);
 
   const isWebRuntime = runtimeType === 'web';
   // A desktop host installed from a Linux package asks for the password on its own screen.

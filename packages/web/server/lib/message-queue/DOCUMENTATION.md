@@ -13,7 +13,7 @@ UI-side queue and foreground auto-send hook.
 
 - `runtime.js` — `createMessageQueueRuntime(...)` (state, persistence,
   dispatch loop, event handling) and `registerMessageQueueRoutes(app, runtime)`.
-- `runtime.test.js` — delivery, idleness gates, retries, holds, persistence,
+- `runtime.test.js` — delivery, idleness gates, retries, held delivery, persistence,
   concurrency with in-flight sends, slash commands, and project knowledge.
 
 Wiring: created in `server/index.js` after the global event hub and the
@@ -115,7 +115,7 @@ disabled until a later load succeeds. `revision` is a global monotonic counter
 bumped on every mutation; clients use it to reject stale snapshots.
 
 In-memory only, deliberately: the in-flight item (`sendingId`), retry
-backoff, abort timestamps, and holds. A restart has no in-flight sends; a
+backoff, and abort timestamps. A restart has no in-flight sends; a
 persisted "sending" flag would strand a message forever.
 
 ## Delivery loop
@@ -181,14 +181,16 @@ persisted "sending" flag would strand a message forever.
 
 A 2xx HTML app-shell response is a failed dispatch, not acceptance. The queued item stays persisted and uses the existing retry backoff.
 
-## Holds
+## Held delivery
 
-Auto-review is driven from the UI and bounces the original session through
-idle between iterations; the UI tells the server to hold that session's queue
-(`PUT .../hold { held: true, ttlMs? }`) while a run is going and releases it
-when the run ends. A hold expires on its own (default 5 min, cap 10 min)
-because the UI that asserted it may be gone; the UI re-asserts it every two
-minutes while the run continues. Releasing arms a dispatch.
+An auto-review run (`../auto-review`) bounces the reviewed session through
+idle between its steps, and a queued follow-up must not land in the middle.
+The runtime takes `isDeliveryHeld(sessionId)`, the auto-review runtime's
+`holdsDelivery`, and the tick delivers nothing while it is true. The run calls
+`release(sessionId)` when it ends, which arms a dispatch. `deliveryHoldReady`
+(the auto-review's `startupLoad`) gates the first `reconcileAll` after start:
+until the auto-review has loaded its runs every session is held, and a tick
+that bailed then has nothing to re-arm it.
 
 ## Routes (`/api/message-queue`)
 
@@ -204,7 +206,6 @@ allowlists.
 | `POST .../sessions/:id/take` | Remove and return every item not in flight, in order |
 | `PUT .../sessions/:id/order` | `{ itemIds }` must be a complete permutation |
 | `DELETE .../sessions/:id` | Clear; the in-flight item stays |
-| `PUT .../sessions/:id/hold` | `{ held, ttlMs? }` |
 
 Every mutation broadcasts `openchamber:message-queue.updated` with
 `{ revision, session }` to all connected clients (SSE and WS), so several

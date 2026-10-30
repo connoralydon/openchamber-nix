@@ -209,7 +209,7 @@ export const WorkStatusRow: React.FC<RowProps> = ({
   // a row action). The row's button is stretched under the content instead:
   // the whole row still answers a press, and controls inside it sit above.
   const row = onClick ? (
-    <div className={cn(shared, 'oc-ref-tint-scope relative transition-colors hover:text-foreground')}>
+    <div className={cn(shared, 'relative transition-colors hover:text-foreground')}>
       <button
         type="button"
         onClick={onClick}

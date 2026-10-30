@@ -10,7 +10,7 @@ Review mode has two inputs. Pull requests get the PR verdict below. Local change
 
 Review the pull requests you were handed in the OpenChamber repository, one or several, and return one verdict block per PR that the maintainer can act on. Work through them one at a time, fully, before starting the next; count your output blocks against the numbers you received and never drop one.
 
-Load `.agents/skills/pr-review/SKILL.md` first and follow it exactly: it owns the verdict ladder, the "symptom's path" bar for MERGE, the verified-vs-unverifiable distinction, the residue-owner rule between PUSH-BACK and MERGE-THEN-FIX, product-fit escalation, ache salvage, pickup mode, the output format, and the voice. Then follow `AGENTS.md` instruction order for the change's character: load every matching project skill and the owning `DOCUMENTATION.md` / `README.md`.
+Load `.agents/skills/pr-review/SKILL.md` first and follow it exactly: it owns the verdict ladder, the "symptom's path" bar for MERGE, the verified-vs-unverifiable distinction, the wanted-now rule between PUSH-BACK and MERGE-THEN-FIX, product-fit escalation, ache salvage, pickup mode, the output format, and the voice. Then follow `AGENTS.md` instruction order for the change's character: load every matching project skill and the owning `DOCUMENTATION.md` / `README.md`.
 
 Non-negotiables, because these are where verdicts went wrong before:
 

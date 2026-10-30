@@ -18,7 +18,7 @@ import {
 import { resolveNpmRegistryRequest } from '../../web/server/lib/opencode/npm-registry-config.js';
 import { writeFileAtomic } from '../../web/server/lib/opencode/atomic-write.js';
 import { toLoadablePluginSpec } from '../../web/server/lib/opencode/loadable-plugin-spec.js';
-import { isGitSpec } from '../../web/server/lib/opencode/plugin-spec.js';
+import { isGitSpec, isPluginControlSpec } from '../../web/server/lib/opencode/plugin-spec.js';
 import {
   toAgentEntity,
   fromAgentEntity,
@@ -107,7 +107,7 @@ export type Snippet = {
 };
 
 export type PluginScope = 'user' | 'project';
-type PluginParsedKind = 'npm' | 'path' | 'git';
+type PluginParsedKind = 'control' | 'npm' | 'path' | 'git';
 
 export type PluginEntry = {
   id: string;
@@ -479,6 +479,32 @@ const getWritableSnippetDir = (scope: SnippetScope, workingDirectory?: string): 
 const findSnippetByName = (name: string, workingDirectory?: string): Snippet | null => {
   assertValidSnippetName(name);
   return loadSnippetRegistry(workingDirectory).get(name.toLowerCase()) ?? null;
+};
+
+// A name or alias that already triggers a snippet is taken: a second file
+// under it would shadow or be shadowed by the first.
+const assertSnippetNameFree = (name: string, registry: Map<string, Snippet>, owner: Snippet | null = null): void => {
+  const current = registry.get(name.toLowerCase());
+  if (current && current !== owner) throw new Error(`Snippet "${name}" already exists`);
+};
+
+const isSameFile = (a: string, b: string): boolean => {
+  const first = fs.statSync(a);
+  const second = fs.statSync(b);
+  return first.dev === second.dev && first.ino === second.ino;
+};
+
+// Rename and scope moves keep the file's bytes; a move across volumes (a
+// project on another disk than the global config) cannot rename.
+const moveSnippetFile = (from: string, to: string): void => {
+  fs.mkdirSync(path.dirname(to), { recursive: true });
+  try {
+    fs.renameSync(from, to);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== 'EXDEV') throw error;
+    fs.copyFileSync(from, to);
+    fs.unlinkSync(from);
+  }
 };
 
 const writeSnippetFile = (filePath: string, config: Record<string, unknown>): void => {
@@ -897,6 +923,7 @@ const getConfigForPath = (layers: ReturnType<typeof readConfigLayers>, targetPat
   if (!targetPath) return layers.userConfig;
   if (layers.paths.customPath && targetPath === layers.paths.customPath) return layers.customConfig;
   if (layers.paths.projectPath && targetPath === layers.paths.projectPath) return layers.projectConfig;
+  if (layers.paths.userOverridePath && targetPath === layers.paths.userOverridePath) return layers.userOverrideConfig;
   return layers.userConfig;
 };
 
@@ -1178,10 +1205,13 @@ const parsePluginRaw = (raw: unknown): { spec: string; options?: Record<string, 
 /** Always v2: a bare string, or `{package, options}`. Never a tuple. */
 const serializePluginEntry = (entry: { spec?: unknown; options?: unknown }): string | { package: string; options?: Record<string, unknown> } => {
   const spec = validatePluginSpec(entry.spec);
-  const serialized = fromPluginEntity({
-    package: spec,
-    options: isPlainObject(entry.options) && Object.keys(entry.options).length > 0 ? entry.options : undefined,
-  });
+  const options = isPlainObject(entry.options) && Object.keys(entry.options).length > 0 ? entry.options : undefined;
+  // OpenCode reads only a bare `-name` string as a control entry; written as
+  // `{package, options}` it becomes a package to install.
+  if (options && isPluginControlSpec(spec)) {
+    throw codedError(`Plugin control entry "${spec}" takes no options`, 'INVALID_SPEC');
+  }
+  const serialized = fromPluginEntity({ package: spec, options });
   if (serialized === null) {
     throw codedError('Plugin spec must be a non-empty string', 'INVALID_SPEC');
   }
@@ -1191,8 +1221,9 @@ const serializePluginEntry = (entry: { spec?: unknown; options?: unknown }): str
 const isPluginPathSpec = (spec: string): boolean =>
   spec.startsWith('/') || spec.startsWith('./') || spec.startsWith('../') || spec.startsWith('~') || path.win32.isAbsolute(spec);
 
-/** How a spec loads, by the server's rule (`plugin-spec.js`): a path, a Git package, or npm. */
+/** How a spec loads, by the server's rule (`plugin-spec.js`): a control entry, a path, a Git package, or npm. */
 const pluginParsedKind = (spec: string): PluginParsedKind => {
+  if (isPluginControlSpec(spec)) return 'control';
   if (isPluginPathSpec(spec)) return 'path';
   if (isGitSpec(spec)) return 'git';
   return 'npm';
@@ -1564,6 +1595,9 @@ export const queryPluginRegistry = async (
       results.push({ kind: 'npm-malformed', spec, error: 'Spec syntax is malformed' });
       continue;
     }
+
+    // A control entry (`-name`, `*`) names no package or path to look up.
+    if (pluginParsedKind(spec) === 'control') continue;
 
     // A Git package never reaches the npm registry; OpenCode resolves it itself.
     if (pluginParsedKind(spec) === 'git') {
@@ -2567,11 +2601,20 @@ export const updateCommand = (commandName: string, updates: Record<string, unkno
 const providerExistsIn = (config: unknown, providerId: string): boolean =>
   readSectionEntry(config, 'providers', providerId).value !== undefined;
 
+// OpenCode reads both global files, and an `opencode.jsonc` beside
+// `opencode.json` overrides it, so the user scope of a provider is the file
+// that holds it: the override when the entry lives there, else the primary.
+const getUserProviderPath = (layers: ReturnType<typeof readConfigLayers>, providerId: string) => {
+  const { userPath, userOverridePath } = layers.paths;
+  return userOverridePath && providerExistsIn(layers.userOverrideConfig, providerId) ? userOverridePath : userPath;
+};
+
 export const getProviderSources = (providerId: string, workingDirectory?: string) => {
   const layers = readConfigLayers(workingDirectory);
+  const userPath = getUserProviderPath(layers, providerId);
   return {
     auth: { exists: false },
-    user: { exists: providerExistsIn(layers.userConfig, providerId), path: layers.paths.userPath },
+    user: { exists: providerExistsIn(getConfigForPath(layers, userPath), providerId), path: userPath },
     project: { exists: providerExistsIn(layers.projectConfig, providerId), path: layers.paths.projectPath ?? null },
     custom: { exists: providerExistsIn(layers.customConfig, providerId), path: layers.paths.customPath },
   };
@@ -2580,20 +2623,20 @@ export const getProviderSources = (providerId: string, workingDirectory?: string
 /** The stored entry the edit form starts from; custom > project > user, like the edit scope. */
 export const getStoredProviderConfig = (providerId: string, workingDirectory?: string) => {
   const layers = readConfigLayers(workingDirectory);
-  return readStoredProviderEntry([layers.customConfig, layers.projectConfig, layers.userConfig], providerId);
+  return readStoredProviderEntry([layers.customConfig, layers.projectConfig, layers.userOverrideConfig, layers.userConfig], providerId);
 };
 
 export const removeProviderConfig = (providerId: string, workingDirectory?: string, scope: 'user' | 'project' | 'custom' = 'user') => {
   if (!providerId) throw new Error('Provider ID is required');
 
   const layers = readConfigLayers(workingDirectory);
-  let targetPath: string | null | undefined = layers.paths.userPath;
+  let targetPath: string | null | undefined = getUserProviderPath(layers, providerId);
 
   if (scope === 'project') {
     if (!workingDirectory) {
       throw new Error('Working directory is required for project scope');
     }
-    targetPath = layers.paths.projectPath ?? targetPath;
+    targetPath = layers.paths.projectPath ?? layers.paths.userPath;
   }
 
   if (scope === 'custom') {
@@ -2787,13 +2830,13 @@ export const upsertProviderConfig = (
   }
 
   const layers = readConfigLayers(workingDirectory);
-  let targetPath: string | null | undefined = layers.paths.userPath;
+  let targetPath: string | null | undefined = getUserProviderPath(layers, validated.value.providerId);
 
   if (scope === 'project') {
     if (!workingDirectory) {
       throw new Error('Working directory is required for project scope');
     }
-    targetPath = layers.paths.projectPath ?? targetPath;
+    targetPath = layers.paths.projectPath ?? layers.paths.userPath;
   } else if (scope === 'custom') {
     if (!layers.paths.customPath) {
       throw new Error('Custom config path (OPENCODE_CONFIG) is not set');
@@ -2818,6 +2861,18 @@ export const upsertProviderConfig = (
 
   const writePath = targetPath || CONFIG_FILE;
   writeConfig(targetConfig, writePath);
+
+  // Settings turns providers off in the primary user file, so saving one that
+  // lives in the override turns it back on there as well.
+  const { userConfig } = layers;
+  if (writePath === layers.paths.userOverridePath
+    && Array.isArray(userConfig.disabled_providers)
+    && userConfig.disabled_providers.includes(validated.value.providerId)) {
+    userConfig.disabled_providers = userConfig.disabled_providers.filter(
+      (entry) => entry !== validated.value.providerId,
+    );
+    writeConfig(userConfig, layers.paths.userPath);
+  }
 
   return {
     providerId: validated.value.providerId,
@@ -2871,6 +2926,7 @@ export const createSnippet = (
   scope: SnippetScope = 'global',
 ): Snippet | null => {
   assertValidSnippetName(name);
+  assertSnippetNameFree(name, loadSnippetRegistry(workingDirectory));
   const dir = getWritableSnippetDir(scope, workingDirectory);
   const filePath = path.join(dir, `${name}${SNIPPET_EXTENSION}`);
   if (fs.existsSync(filePath)) throw new Error(`Snippet "${name}" already exists`);
@@ -2878,11 +2934,35 @@ export const createSnippet = (
   return getSnippet(name, workingDirectory);
 };
 
+/**
+ * Writes the snippet's fields; `updates.name` renames it and `updates.scope`
+ * moves it between the global and the project folder.
+ */
 export const updateSnippet = (name: string, updates: Record<string, unknown>, workingDirectory?: string): Snippet | null => {
-  const existing = findSnippetByName(name, workingDirectory);
+  assertValidSnippetName(name);
+  const registry = loadSnippetRegistry(workingDirectory);
+  const existing = registry.get(name.toLowerCase());
   if (!existing) throw new Error(`Snippet "${name}" not found`);
-  writeSnippetFile(existing.filePath, { ...existing, ...(updates || {}) });
-  return getSnippet(name, workingDirectory);
+  const { name: nextNameInput, scope: nextScopeInput, ...fields } = updates || {};
+  const nextName = String(nextNameInput ?? '').trim() || existing.name;
+  const nextScope: SnippetScope = nextScopeInput === 'project' || nextScopeInput === 'global' ? nextScopeInput : existing.source;
+  assertValidSnippetName(nextName);
+
+  const targetPath = nextName === existing.name && nextScope === existing.source
+    ? existing.filePath
+    : path.join(getWritableSnippetDir(nextScope, workingDirectory), `${nextName}${SNIPPET_EXTENSION}`);
+  if (targetPath !== existing.filePath) {
+    assertSnippetNameFree(nextName, registry, existing);
+    // A case-only rename finds its own file on a case-insensitive disk; any
+    // other file there is a snippet the registry shadows, never overwritten.
+    if (fs.existsSync(targetPath) && !isSameFile(targetPath, existing.filePath)) {
+      throw new Error(`Snippet "${nextName}" already exists`);
+    }
+  }
+
+  writeSnippetFile(existing.filePath, { ...existing, ...fields });
+  if (targetPath !== existing.filePath) moveSnippetFile(existing.filePath, targetPath);
+  return getSnippet(nextName, workingDirectory);
 };
 
 export const deleteSnippet = (name: string, workingDirectory?: string): void => {
@@ -2896,6 +2976,22 @@ export const expandSnippets = (text: string, workingDirectory?: string): string 
   const collector = { prepend: [] as string[], append: [] as string[] };
   const expanded = expandSnippetText(text || '', registry, new Map(), collector).trim();
   return [...collector.prepend, expanded, ...collector.append].filter(Boolean).join('\n\n');
+};
+
+/**
+ * What a snippet body, saved or not, sends once used: its own prepend and
+ * append blocks placed, and the snippets it names expanded.
+ */
+export const previewSnippet = (content: string, workingDirectory?: string): string => {
+  const registry = loadSnippetRegistry(workingDirectory);
+  const collector = { prepend: [] as string[], append: [] as string[] };
+  const counts = new Map<string, number>();
+  const parsed = parseSnippetBlocks(content || '');
+  // The order `expandSnippetText` gives a used snippet: its blocks, then its text.
+  for (const block of parsed.prepend) collector.prepend.push(expandSnippetText(block, registry, counts, collector));
+  for (const block of parsed.append) collector.append.push(expandSnippetText(block, registry, counts, collector));
+  const inline = expandSnippetText(parsed.inline, registry, counts, collector).trim();
+  return [...collector.prepend, inline, ...collector.append].filter(Boolean).join('\n\n');
 };
 
 // ============== SKILL SCOPE HELPERS ==============

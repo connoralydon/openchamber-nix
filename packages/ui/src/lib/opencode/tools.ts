@@ -443,9 +443,10 @@ const MAX_TEXT_LENGTH = 120
 
 const OPENCHAMBER_RENDER_TOOL = "openchamber_render"
 const OPENCHAMBER_WORKFLOW_TOOL = "openchamber_workflow"
+const OPENCHAMBER_IMAGE_TOOL = "openchamber_image"
 
-/** The control, schedule, browser, memory, knowledge, notify, render and workflow tools OpenChamber gives a session. */
-const OPENCHAMBER_TOOLS = new Set(["openchamber", "openchamber_schedule", "openchamber_web", "openchamber_memory", "openchamber_knowledge", "openchamber_notify", OPENCHAMBER_RENDER_TOOL, OPENCHAMBER_WORKFLOW_TOOL])
+/** The control, schedule, browser, memory, knowledge, notify, render, image and workflow tools OpenChamber gives a session. */
+const OPENCHAMBER_TOOLS = new Set(["openchamber", "openchamber_schedule", "openchamber_web", "openchamber_memory", "openchamber_knowledge", "openchamber_notify", OPENCHAMBER_RENDER_TOOL, OPENCHAMBER_IMAGE_TOOL, OPENCHAMBER_WORKFLOW_TOOL])
 
 // The result envelope the agent tool returns as text (`agent-tool/runtime.js`).
 const proposedWorkflowResultSchema = z.object({
@@ -471,14 +472,36 @@ export function proposedWorkflowRunId(toolName: ToolName, state: ToolState): str
   return result.success ? result.data.data.runId : null
 }
 
+// The result envelope of a finished `image.generate` call (`openchamber-control/generate-image.js`).
+const generatedImagesResultSchema = z.object({
+  ok: z.literal(true),
+  action: z.literal("image.generate"),
+  data: z.object({ images: z.array(z.object({ path: z.string().min(1) })).min(1) }),
+})
+
+/** The files an `openchamber_image` call saved, in order; none for any other part. */
+export function generatedImagePaths(toolName: ToolName, state: ToolState): string[] {
+  if (toolName !== OPENCHAMBER_IMAGE_TOOL || state.status !== "completed") return []
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(state.output)
+  } catch {
+    return []
+  }
+  const result = generatedImagesResultSchema.safeParse(parsed)
+  return result.success ? result.data.data.images.map((image) => image.path) : []
+}
+
 /**
  * Whether the chat draws what a call showed instead of its tool row: a page
- * from `openchamber_render`, or the run a `workflow.run` call proposed. Both
- * ask something of the user, so both are hoisted to the answer when Activity
- * is collapsed.
+ * from `openchamber_render`, the run a `workflow.run` call proposed, or the
+ * images `image.generate` made. The user is meant to see all three, so they
+ * are hoisted to the answer when Activity is collapsed.
  */
 export const isShownInPlace = (toolName: ToolName, state: ToolState): boolean => (
-  renderedPage(toolName, state) !== null || proposedWorkflowRunId(toolName, state) !== null
+  renderedPage(toolName, state) !== null
+  || proposedWorkflowRunId(toolName, state) !== null
+  || generatedImagePaths(toolName, state).length > 0
 )
 
 const openChamberCallSchema = z

@@ -76,6 +76,15 @@ refetches its own provider sources and integrations and lets the catalog
 events refresh the stores. (The old "nudge" went through `/api/config/reload`,
 which restarts a managed OpenCode and showed the reload overlay.)
 
+Every credential write (`integration.connect.*`, `integration.oauth.*`) goes
+to the location the integration list is read from, through
+`getIntegrationClient()` in `lib/opencode/integration-catalog.ts`. OpenCode
+registers integrations per location once that location's plugins activate,
+and only `integration.list` waits for it. An unscoped write landed in the home
+location, which nobody had read yet: it booted there and answered
+"Integration not found", so every first connect failed and the retry worked.
+`credential.*` routes are not location-bound and stay unscoped.
+
 An integration method can declare a `form` (an Azure resource name, a
 Cloudflare account id). OAuth, external and API key methods render it through
 the same `ProviderFormFields`, check required fields with the helpers in

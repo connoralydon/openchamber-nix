@@ -13,6 +13,11 @@
     line-height: round(1.45em, 1px);
   }
 
+  .typography-ui-section {
+    font-size: var(--text-ui-section);
+    line-height: round(1.45em, 1px);
+  }
+
   .typography-ui-label {
     font-size: var(--text-ui-label);
     line-height: round(1.45em, 1px);
@@ -58,13 +63,13 @@
 
   .typography-settings-field-label {
     font-size: var(--text-ui-label);
-    font-weight: 400;
+    font-weight: var(--ui-regular-font-weight, 400);
     line-height: 1.2;
   }
 
   .typography-settings-description {
     font-size: var(--text-meta);
-    font-weight: 400;
+    font-weight: var(--ui-regular-font-weight, 400);
     line-height: 1.5;
   }
 

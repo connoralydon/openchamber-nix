@@ -1923,7 +1923,7 @@ export const RemoteInstancesPage: React.FC = () => {
                             className="mt-0.5"
                           />
                           <div className="min-w-0">
-                            <p className={cn('typography-ui-label font-normal', selected ? 'text-foreground' : 'text-foreground/70')}>{option.label}</p>
+                            <p className={cn('typography-ui-label font-normal', selected ? 'text-foreground' : 'oc-title-rest')}>{option.label}</p>
                             <p className="typography-meta text-muted-foreground">{option.hint}</p>
                           </div>
                         </div>
@@ -2686,7 +2686,7 @@ export const RemoteInstancesPage: React.FC = () => {
         contentClassName="space-y-2"
       >
           {draft.portForwards.length === 0 ? (
-            <p className="typography-micro text-muted-foreground/80">{t('settings.remoteInstances.page.empty.noExtraForwards')}</p>
+            <p className="typography-micro text-muted-foreground">{t('settings.remoteInstances.page.empty.noExtraForwards')}</p>
           ) : null}
 
           {draft.portForwards.map((forward, index) => {
@@ -2737,7 +2737,7 @@ export const RemoteInstancesPage: React.FC = () => {
                     <CollapsibleTrigger className="flex items-center gap-2 group">
                       <Icon name="arrow-down-s" className={`h-4 w-4 text-muted-foreground transition-transform ${isForwardOpen ? 'rotate-180' : ''}`} />
                       <span className="typography-ui-label text-foreground truncate">{buildForwardLabel(forward)}</span>
-                      <span className="typography-micro text-muted-foreground/70 shrink-0">{typeLabel}</span>
+                      <span className="typography-micro text-muted-foreground shrink-0">{typeLabel}</span>
                     </CollapsibleTrigger>
                   </div>
                   <div className="flex items-center gap-2">
@@ -2877,7 +2877,7 @@ export const RemoteInstancesPage: React.FC = () => {
                     ) : null}
 
                     <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-md bg-[var(--surface-subtle)] p-2">
-                      <div className="flex flex-wrap items-center gap-1 typography-micro text-muted-foreground/80">
+                      <div className="flex flex-wrap items-center gap-1 typography-micro text-muted-foreground">
                         {forward.type === 'dynamic' ? (
                           <>
                             <Icon name="computer" className="h-3.5 w-3.5" />

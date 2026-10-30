@@ -128,7 +128,7 @@ export type BrowserOpenData = {
   url: string;
   title: string;
   opened: true;
-  /** `false` means the page is still loading, not that opening failed. */
+  /** `false` means the page is still loading or still changing after its load, not that opening failed. */
   settled: boolean;
   viewport: BrowserViewportSummary;
 };

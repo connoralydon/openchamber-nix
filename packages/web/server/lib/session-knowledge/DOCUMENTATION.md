@@ -108,9 +108,10 @@ which is `readRenameableGeneratedBranch` in `../git`), the entry adds an
 instruction: name the task with `work.name` and pass `branch`, the branch
 named after the task in the repository's own naming or else
 `<type>/<short-kebab-case>`, with no tool prefix; `work.name` renames it.
-An issue's placeholder (`issue-180-merry-salamander`) keeps its `issue-180-`,
-which `../git` puts back in front of the agent's name, and the instruction
-says so, so the agent does not fight it.
+An issue's placeholder (`issue-180-merry-salamander`) keeps its number, which
+`../git` puts in front of the last segment of the agent's name
+(`fix/180-login-timeout`), and the instruction says so, so the agent does not
+fight it.
 Said only in the `work.name` answer, the first agent to hear it read it and
 went on; told to run `git branch -m` beside `work.name`, weaker models named
 the task and dropped the rename, so `work.name` now refuses a placeholder

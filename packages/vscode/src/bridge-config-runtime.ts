@@ -55,6 +55,7 @@ import {
   updateMcpConfig,
   deleteMcpConfig,
   expandSnippets,
+  previewSnippet,
   setWebSearchSelection,
   setWarmingEnabled,
   setSkillEnabled,
@@ -593,7 +594,11 @@ export async function handleConfigBridgeMessage(
       }
 
       if (normalizedMethod === 'POST' && !snippetName) {
-        return { id, type, success: true, data: { text: expandSnippets(typeof body?.text === 'string' ? body.text : '', workingDirectory) } };
+        // `content` asks for a snippet body's preview, `text` for a prompt's expansion.
+        const text = body?.content !== undefined
+          ? previewSnippet(String(body.content), workingDirectory)
+          : expandSnippets(typeof body?.text === 'string' ? body.text : '', workingDirectory);
+        return { id, type, success: true, data: { text } };
       }
 
       if (!snippetName) {

@@ -145,8 +145,12 @@ const OUTCOME_STATES = { succeeded: 'completed', failed: 'error', interrupted: '
  * meets OpenCode's: a remote OpenCode whose clock lags would otherwise make a
  * finished turn look older than its own dispatch. Only an entry stored
  * without that baseline (`afterIdleId` undefined) falls back to `dispatchedAt`.
+ *
+ * `withText` takes the text from the newest reply of the turn that has any,
+ * for a caller that forwards the answer: a turn can end on a step that only
+ * ran tools. The error still comes from the newest reply.
  */
-export const readDispatchOutcome = (records, dispatchedAt, afterIdleId) => {
+export const readDispatchOutcome = (records, dispatchedAt, afterIdleId, { withText = false } = {}) => {
   const idleIndex = records.findIndex((record) => parse(recordTypeSchema, record)?.type === 'idle');
   if (idleIndex === -1) return null;
   // A malformed idle record proves nothing about the turn: keep waiting.
@@ -159,12 +163,14 @@ export const readDispatchOutcome = (records, dispatchedAt, afterIdleId) => {
     ? records.findIndex((record) => parse(recordIdSchema, record)?.id === afterIdleId)
     : -1;
   const turnRecords = records.slice(idleIndex + 1, baselineIndex === -1 ? undefined : baselineIndex);
-  const reply = turnRecords
+  const replies = turnRecords
     .map((record) => parse(assistantRecordSchema, record))
-    .find((assistant) => assistant !== null && (byOrder || assistant.time.created >= dispatchedAt));
+    .filter((assistant) => assistant !== null && (byOrder || assistant.time.created >= dispatchedAt));
+  const reply = replies[0];
+  const textReply = withText ? replies.find((assistant) => assistantText(assistant)) : reply;
   return {
     state: OUTCOME_STATES[idle.outcome],
-    text: reply ? assistantText(reply) : '',
+    text: textReply ? assistantText(textReply) : '',
     errorMessage: reply?.error?.message?.trim() ?? '',
   };
 };

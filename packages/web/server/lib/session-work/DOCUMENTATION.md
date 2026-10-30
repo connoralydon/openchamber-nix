@@ -122,26 +122,6 @@ the wording or thresholds without re-running this measurement.
 Both are read at every use. A session in work also stays under its project
 group and folders: In work is an extra view of it, not a move.
 
-## When the session's folder is gone
-
-OpenCode (2.0.32, 2.1.0) refuses every metadata write for a session whose
-folder no longer exists, once that folder is not loaded, with
-`LocationNotFoundError`, though the session still reads.
-The metadata route, and the VS Code bridge, answer that with the code
-`SESSION_DIRECTORY_MISSING`; Track / Done then shows "This session's folder was
-deleted" with an Archive button that archives the session and its subagents at
-once, without the archive confirmation; the success toast offers Undo
-(`sessionWorkFailure.ts` in the sidebar sessions). Any other failure keeps the
-generic toast.
-
-### Why offer archive and not keep the work state somewhere else
-
-Work state lives on the OpenCode record, the single authority every client
-reads. A second store for sessions OpenCode refuses would have to be merged
-into every read and cleaned up when the folder returns. Archive is already
-OpenChamber's own record, works without the folder, and takes the session out
-of In work, which is what the user wanted from Done.
-
 ## Runtime parity
 
 - Web, desktop, hosted mobile, Capacitor: all of it; the server opens

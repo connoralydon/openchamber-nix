@@ -10,6 +10,7 @@ import { readConfig } from './opencodeConfig';
 import { isRecord, toProviderEntity } from './opencode-config-v2';
 import { fetchExeDevUsage } from './exeDevQuota';
 import { refreshGoogleAccessToken } from '../../web/server/lib/quota/providers/google/oauth.js';
+import { readConsoleBudgets, withConsoleBudgets, type ConsoleBudgets } from '../../web/server/lib/quota/console-budgets.js';
 import { antigravityHeaders, warnIfGeminiGroupMissing } from '../../web/server/lib/quota/providers/antigravity/client.js';
 
 type AuthEntry = Record<string, unknown> | string;
@@ -35,6 +36,7 @@ type UsageWindow = {
 type ProviderUsage = {
   windows: Record<string, UsageWindow>;
   models?: Record<string, ProviderUsage>;
+  consoleBudgets?: ConsoleBudgets;
 };
 
 type OpenAiUsagePayload = {
@@ -4117,6 +4119,39 @@ type XaiQuotaDependencies = {
   fetchImpl?: (url: string, options: RequestInit) => Promise<Response>;
 };
 
+/** The Go meters: a Console sign-in first, its API key as the fallback. */
+const fetchOpenCodeGoQuota = async (): Promise<ProviderResult> => {
+  const providerId = 'opencode-go';
+  try {
+    deleteLegacyOpenCodeGoCredential();
+    const auth = await readOpenCodeCredentials();
+    // A Console sign-in serves OpenCode Go once it exists; the
+    // API key is the fallback for accounts without one, and for a Console
+    // read that fails (no Go in that org, an endpoint change, a hiccup).
+    const consoleCredential = openCodeGoConsoleCredential(auth);
+    const apiKey = openCodeGoApiKey(auth);
+    let consoleFailure: Error | null = null;
+    if (consoleCredential) {
+      try {
+        return buildResult({ providerId, providerName: 'OpenCode Go', ok: true, configured: true, usage: { windows: await fetchOpenCodeGoUsage(consoleCredential) } });
+      } catch (consoleError) {
+        if (!apiKey) throw consoleError;
+        consoleFailure = consoleError instanceof Error ? consoleError : new Error('Request failed');
+      }
+    }
+    if (!apiKey) return buildResult({ providerId, providerName: 'OpenCode Go', ok: false, configured: false, error: 'Not configured' });
+    try {
+      return buildResult({ providerId, providerName: 'OpenCode Go', ok: true, configured: true, usage: { windows: await fetchOpenCodeGoUsage(apiKey) } });
+    } catch (keyError) {
+      // The expired-key advice is to connect a Console account; with one
+      // already connected, its own failure is the actionable error.
+      throw consoleFailure && keyError instanceof Error && keyError.message === OPENCODE_GO_KEY_EXPIRED ? consoleFailure : keyError;
+    }
+  } catch (error) {
+    return buildResult({ providerId, providerName: 'OpenCode Go', ok: false, configured: true, error: error instanceof Error ? error.message : 'Request failed' });
+  }
+};
+
 export const fetchXaiQuota = async ({ readAuth = readOpenCodeCredentials, fetchImpl = fetch }: XaiQuotaDependencies = {}): Promise<ProviderResult> => {
   try {
     const entry = resolveXaiAuth(await readAuth());
@@ -4224,34 +4259,9 @@ const fetchQuotaForProviderUncoalesced = async (providerId: string): Promise<Pro
     case 'wafer':
       return fetchWaferQuota();
     case 'opencode-go': {
-      try {
-        deleteLegacyOpenCodeGoCredential();
-        const auth = await readOpenCodeCredentials();
-        // A Console sign-in serves OpenCode Go once it exists; the
-        // API key is the fallback for accounts without one, and for a Console
-        // read that fails (no Go in that org, an endpoint change, a hiccup).
-        const consoleCredential = openCodeGoConsoleCredential(auth);
-        const apiKey = openCodeGoApiKey(auth);
-        let consoleFailure: Error | null = null;
-        if (consoleCredential) {
-          try {
-            return buildResult({ providerId, providerName: 'OpenCode Go', ok: true, configured: true, usage: { windows: await fetchOpenCodeGoUsage(consoleCredential) } });
-          } catch (consoleError) {
-            if (!apiKey) throw consoleError;
-            consoleFailure = consoleError instanceof Error ? consoleError : new Error('Request failed');
-          }
-        }
-        if (!apiKey) return buildResult({ providerId, providerName: 'OpenCode Go', ok: false, configured: false, error: 'Not configured' });
-        try {
-          return buildResult({ providerId, providerName: 'OpenCode Go', ok: true, configured: true, usage: { windows: await fetchOpenCodeGoUsage(apiKey) } });
-        } catch (keyError) {
-          // The expired-key advice is to connect a Console account; with one
-          // already connected, its own failure is the actionable error.
-          throw consoleFailure && keyError instanceof Error && keyError.message === OPENCODE_GO_KEY_EXPIRED ? consoleFailure : keyError;
-        }
-      } catch (error) {
-        return buildResult({ providerId, providerName: 'OpenCode Go', ok: false, configured: true, error: error instanceof Error ? error.message : 'Request failed' });
-      }
+      // The Console budgets of the same sign-in sit beside the Go meters.
+      const [result, consoleBudgets] = await Promise.all([fetchOpenCodeGoQuota(), readConsoleBudgets()]);
+      return withConsoleBudgets(result, consoleBudgets);
     }
     case 'cursor':
       return fetchCursorQuota();

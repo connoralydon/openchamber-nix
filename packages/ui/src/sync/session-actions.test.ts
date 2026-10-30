@@ -3518,24 +3518,14 @@ describe("setSessionWorkState", () => {
     expect(request?.body).toMatchObject({ patch: { openchamber: { work: { state: "open", openedBy: "user" } } } })
   })
 
-  test("reports a deleted session folder as its own error", async () => {
-    const { SessionDirectoryMissingError, setSessionWorkState } = await import("./session-actions")
-    archiveBatchResponse = { status: 409, body: { error: "Location not found: /gone", code: "SESSION_DIRECTORY_MISSING" } }
-
-    const failure = await setSessionWorkState("ses-work", "/gone", "done").catch((error: Error) => error)
-
-    expect(failure instanceof SessionDirectoryMissingError).toBe(true)
-    expect(globalUpsertedSessions).toHaveLength(0)
-  })
-
-  test("keeps any other failed write a plain error", async () => {
-    const { SessionDirectoryMissingError, setSessionWorkState } = await import("./session-actions")
+  test("reports a failed write and stores nothing", async () => {
+    const { setSessionWorkState } = await import("./session-actions")
     archiveBatchResponse = { status: 500, body: { error: "OpenCode is down" } }
 
     const failure = await setSessionWorkState("ses-work", "/test/project", "done").catch((error: Error) => error)
 
     expect(failure instanceof Error).toBe(true)
-    expect(failure instanceof SessionDirectoryMissingError).toBe(false)
+    expect(globalUpsertedSessions).toHaveLength(0)
   })
 
   test("writes nothing to the new server when the runtime switches during the read", async () => {

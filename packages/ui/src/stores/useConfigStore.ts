@@ -21,6 +21,7 @@ import { loadDesktopSettings, updateDesktopSettings } from "@/lib/persistence";
 import { useDirectoryStore } from "@/stores/useDirectoryStore";
 import { useProjectsStore } from "@/stores/useProjectsStore";
 import { resolveProjectForSessionDirectory } from "@/lib/projectResolution";
+import { isSpaceDirectory } from "@/lib/spaces/space-route";
 import { streamDebugEnabled } from "@/stores/utils/streamDebug";
 import { parseModelIdentifier, parseModelSelection } from "@/lib/modelIdentifier";
 import type { ModelRef } from "@/lib/settings/parsers";
@@ -31,7 +32,7 @@ import { markStartupTrace, measureStartupTrace } from "@/lib/startupTrace";
 import { normalizePath } from "@/lib/pathNormalization";
 import { getSyncConfig, subscribeToSyncConfigChanges } from "@/sync/sync-refs";
 import { getRuntimeKey, subscribeRuntimeEndpointChanged } from "@/lib/runtime-switch";
-import { readCachedCatalog, shouldHoldFirstLoadAgainstCache, writeCachedCatalogWhenSettled, type CachedCatalog } from "./configCatalogCache";
+import { readCachedCatalog, writeCachedCatalogWhenSettled, type CachedCatalog } from "./configCatalogCache";
 
 const MODELS_DEV_API_URL = "https://models.dev/api.json";
 const MODELS_DEV_PROXY_URL = "/api/openchamber/models-metadata";
@@ -63,6 +64,7 @@ interface OpenChamberDefaults {
     sttModel?: string;
     sttLocalModel?: string;
     sttLanguage?: string;
+    sttCorrectTranscript?: boolean;
 }
 
 // Directory activation re-reads the OpenChamber defaults, which are global,
@@ -147,6 +149,7 @@ const toOpenChamberDefaults = (data: DesktopSettings): OpenChamberDefaults => {
         sttModel: data.sttModel,
         sttLocalModel: data.sttLocalModel,
         sttLanguage: data.sttLanguage,
+        sttCorrectTranscript: data.sttCorrectTranscript,
     };
 };
 
@@ -989,6 +992,9 @@ const resolveProjectDirectory = (directory: string | null | undefined): string |
     const projects = getKnownProjectDirectories();
     if (!dir) return null;
     if (projects.includes(dir)) return dir;
+    // A space's sessions take their models from what the space was given, never from the host
+    // project's defaults, so its directory maps to no project here (see `space-catalog-sync.ts`).
+    if (isSpaceDirectory(dir)) return null;
 
     // 1. Persisted mapping — resolves synchronously when the async worktree
     //    discovery has not populated the runtime map yet.
@@ -1024,9 +1030,7 @@ const CONFIG_REFRESH_TTL_MS = 30_000;
 
 // OpenCode announces a rebuilt catalog for the directory it rebuilt, and only
 // the active directory is re-read at once. Any other directory is marked stale
-// so returning to it re-reads instead of trusting its snapshot: a worktree left
-// while OpenCode was still starting it holds a provider list from before its
-// plugin providers registered. A load that began before the mark must not make
+// so returning to it re-reads instead of trusting its snapshot. A load that began before the mark must not make
 // the directory fresh again, so marks carry a revision and loads capture one.
 const ALL_DIRECTORIES = '*';
 let _catalogRevision = 0;
@@ -1075,52 +1079,18 @@ const getConfigLoadKey = (context: ConfigRuntimeContext, directoryKey: string): 
     JSON.stringify([context.generation, context.runtimeKey, directoryKey])
 );
 
-// Catalogs shown from the persisted cache (configCatalogCache.ts), by load key,
-// with the entry count they showed: providers count their models. The first
-// live load of such a directory is checked against that count; see
-// `shouldHoldFirstLoadAgainstCache`.
-const _providersShownFromCache = new Map<string, number>();
-const _agentsShownFromCache = new Map<string, number>();
-// A location OpenCode is still starting completes its catalog about two
-// seconds after the first, partial answer.
-const CATALOG_CACHE_RECHECK_MS = 2_500;
-const CATALOG_CACHE_RECHECK_SOURCE = 'catalogCacheRecheck';
-
-const countCatalogModels = (providers: readonly ProviderWithModelList[]): number =>
-    providers.reduce((count, provider) => count + provider.models.length, 0);
-
 /**
- * True when a first live catalog for a directory shown from the cache is
- * smaller than the cache. The caller keeps the cached catalog on screen and
- * re-reads once; that re-read is applied whatever it holds.
- */
-const holdFirstLoadAgainstCache = (shownFromCache: Map<string, number>, loadKey: string, loadedCount: number): boolean => {
-    const cachedCount = shownFromCache.get(loadKey);
-    if (cachedCount === undefined) return false;
-    shownFromCache.delete(loadKey);
-    return shouldHoldFirstLoadAgainstCache(cachedCount, loadedCount);
-};
-
-/**
- * Persists a catalog a live load applied, once it has settled. A location
- * OpenCode is still starting answers partial first (no plugin providers or
- * agents) and announces the full catalog with catalog events about two seconds
- * later; a load such an event superseded is never stored, the re-read the event
- * triggers is. An empty catalog is stored only by the re-read after a held
- * first load: a cold location answers empty before it has started, and that
- * answer must not erase a good cached catalog.
+ * Persists a catalog a live load applied, once it has settled. A load a later
+ * catalog event superseded is never stored; the re-read the event triggers is.
  */
 const persistLoadedCatalog = (
     context: ConfigRuntimeContext,
     directoryKey: string,
-    source: string,
     update: CachedCatalog,
-    isEmpty: boolean,
     staleAt: Map<string, number>,
     loadRevision: number,
 ): void => {
     if (directoryKey === DIRECTORY_KEY_GLOBAL) return;
-    if (isEmpty && source !== CATALOG_CACHE_RECHECK_SOURCE) return;
     writeCachedCatalogWhenSettled(
         context.runtimeKey,
         directoryKey,
@@ -1140,7 +1110,6 @@ const hydrateConfigCatalogFromCache = async (directoryKey: string): Promise<void
     const context = captureConfigRuntimeContext();
     const cached = await readCachedCatalog(context.runtimeKey, directoryKey);
     if (!cached || !isConfigRuntimeContextCurrent(context)) return;
-    const loadKey = getConfigLoadKey(context, directoryKey);
     useConfigStore.setState((state) => {
         const snapshot = state.directoryScoped[directoryKey] ?? createEmptyDirectoryScopedConfig();
         const isActive = state.activeDirectoryKey === directoryKey;
@@ -1151,8 +1120,6 @@ const hydrateConfigCatalogFromCache = async (directoryKey: string): Promise<void
         const providers = !providersLive && cached.providers?.length ? cached.providers : null;
         const agents = !agentsLive && cached.agents?.length ? cached.agents : null;
         if (!providers && !agents) return state;
-        if (providers) _providersShownFromCache.set(loadKey, countCatalogModels(providers));
-        if (agents) _agentsShownFromCache.set(loadKey, agents.length);
         markStartupTrace('configCatalogCache:hydrated', { directoryKey, providers: providers?.length ?? 0, agents: agents?.length ?? 0 });
         const defaultProviders = providers && cached.defaultProviders ? cached.defaultProviders : snapshot.defaultProviders;
         const nextSnapshot: DirectoryScopedConfig = {
@@ -1189,8 +1156,6 @@ subscribeRuntimeEndpointChanged((detail) => {
     _providersStaleAt.clear();
     _agentsStaleAt.clear();
     _agentsLoadErrors.clear();
-    _providersShownFromCache.clear();
-    _agentsShownFromCache.clear();
     _inFlightProviders.clear();
     _inFlightAgents.clear();
     _agentsLoadGeneration.clear();
@@ -1520,6 +1485,7 @@ interface ConfigStore {
     sttModel: string;
     sttLocalModel: string;
     sttLanguage: string;
+    sttCorrectTranscript: boolean;
     showMessageTTSButtons: boolean;
     autoReadAloudEnabled: boolean;
     ttsInputMode: 'sanitized' | 'raw' | 'summarized';
@@ -1554,6 +1520,7 @@ interface ConfigStore {
     setSttModel: (model: string) => void;
     setSttLocalModel: (model: string) => void;
     setSttLanguage: (lang: string) => void;
+    setSttCorrectTranscript: (enabled: boolean) => void;
     setShowMessageTTSButtons: (show: boolean) => void;
     setAutoReadAloudEnabled: (enabled: boolean) => void;
     setTtsInputMode: (mode: 'sanitized' | 'raw' | 'summarized') => void;
@@ -1678,9 +1645,9 @@ export const selectConfigAgentsForDirectory = (
 
 /**
  * A model as any loaded catalog lists it: the active directory's first, then
- * the snapshots of the others. For display only. A directory OpenCode is still
- * starting answers with a partial catalog for a second or two, and the
- * composer keeps the name it already knows meanwhile instead of a raw id.
+ * the snapshots of the others. For display only. While a directory's catalog
+ * has not loaded yet, the composer keeps the name it already knows instead of
+ * a raw id.
  * Selection, variants and validation stay on the active catalog.
  */
 export const selectKnownCatalogModel = (
@@ -1942,7 +1909,9 @@ export const useConfigStore = create<ConfigStore>()(
                         const saved = localStorage.getItem('sttLocalModel');
                         if (saved) return saved;
                     }
-                    return 'parakeet-tdt-0.6b-v2-int8';
+                    // Not picked yet: the server chooses the model, see the
+                    // dictation service's resolveLocalModelId.
+                    return '';
                 })(),
                 sttLanguage: (() => {
                     if (typeof window !== 'undefined') {
@@ -1951,6 +1920,8 @@ export const useConfigStore = create<ConfigStore>()(
                     }
                     return '';
                 })(),
+                // Fix misheard words with the Small Model after dictation - off by default
+                sttCorrectTranscript: globalThis.localStorage?.getItem('sttCorrectTranscript') === 'true',
                 // Show TTS buttons on messages - disabled by default until user enables it
                 showMessageTTSButtons: (() => {
                     if (typeof window !== 'undefined') {
@@ -2277,16 +2248,6 @@ export const useConfigStore = create<ConfigStore>()(
                                 }));
 
                             if (!isConfigRuntimeContextCurrent(runtimeContext)) return;
-                            if (holdFirstLoadAgainstCache(_providersShownFromCache, inFlightKey, countCatalogModels(processedProviders))) {
-                                // The cached catalog stays on screen; this answer is likely a
-                                // location still starting. The re-read is applied as it is.
-                                markStartupTrace('loadProviders:heldAgainstCache', { directoryKey, source, providers: processedProviders.length });
-                                setTimeout(() => {
-                                    if (!isConfigRuntimeContextCurrent(runtimeContext)) return;
-                                    void get().loadProviders({ directory: fromDirectoryKey(directoryKey), source: CATALOG_CACHE_RECHECK_SOURCE, fresh: true });
-                                }, CATALOG_CACHE_RECHECK_MS);
-                                return;
-                            }
                             // A re-read that returns the same catalog keeps the arrays the
                             // store already holds, so nothing subscribed to them re-renders.
                             const nextProviders = isSameProviderCatalog(previousProviders, processedProviders)
@@ -2413,8 +2374,8 @@ export const useConfigStore = create<ConfigStore>()(
                                 models: processedProviders.reduce((count, provider) => count + provider.models.length, 0),
                             });
                             markCatalogLoaded(_providersLoadedAt, _providersStaleAt, directoryKey, loadRevision);
-                            if (nextProviders !== previousProviders || nextDefaults !== previousDefaults || source === CATALOG_CACHE_RECHECK_SOURCE) {
-                                persistLoadedCatalog(runtimeContext, directoryKey, source, { providers: nextProviders, defaultProviders: nextDefaults }, nextProviders.length === 0, _providersStaleAt, loadRevision);
+                            if (nextProviders !== previousProviders || nextDefaults !== previousDefaults) {
+                                persistLoadedCatalog(runtimeContext, directoryKey, { providers: nextProviders, defaultProviders: nextDefaults }, _providersStaleAt, loadRevision);
                             }
                             return;
                         } catch (error) {
@@ -2795,6 +2756,7 @@ export const useConfigStore = create<ConfigStore>()(
                             sttModel: defaults.sttModel ?? state.sttModel,
                             sttLocalModel: defaults.sttLocalModel ?? state.sttLocalModel,
                             sttLanguage: defaults.sttLanguage ?? state.sttLanguage,
+                            sttCorrectTranscript: defaults.sttCorrectTranscript ?? state.sttCorrectTranscript,
                         };
                         if (!useSessionUIStore.getState().currentSessionId && state.selectionSource === 'auto' && state.agentSelectionSource === 'auto' && next.settingsDefaultAgent) {
                             next.currentAgentName = next.settingsDefaultAgent;
@@ -2888,16 +2850,6 @@ export const useConfigStore = create<ConfigStore>()(
                                 throw new Error('Session defaults are not available yet');
                             }
                             const safeAgents = Array.isArray(agents) ? agents : [];
-                            if (holdFirstLoadAgainstCache(_agentsShownFromCache, inFlightKey, safeAgents.length)) {
-                                // Same as providers: the cached agents stay until the re-read.
-                                markStartupTrace('loadAgents:heldAgainstCache', { directoryKey, source, agents: safeAgents.length });
-                                setTimeout(() => {
-                                    if (!isConfigRuntimeContextCurrent(runtimeContext)) return;
-                                    void get().loadAgents({ directory: configDirectoryPath, source: CATALOG_CACHE_RECHECK_SOURCE, fresh: true });
-                                }, CATALOG_CACHE_RECHECK_MS);
-                                return true;
-                            }
-
                             const latestSyncedOpencodeConfig = getSyncConfig(requestedDirectory ?? undefined)
                                 ?? getSyncConfig(configDirectoryPath ?? undefined);
                             const hasLatestSyncedOpencodeConfig = latestSyncedOpencodeConfig !== undefined;
@@ -3041,7 +2993,7 @@ export const useConfigStore = create<ConfigStore>()(
                                     agents: safeAgents.length,
                                 });
                                 markCatalogLoaded(_agentsLoadedAt, _agentsStaleAt, directoryKey, loadRevision);
-                                persistLoadedCatalog(runtimeContext, directoryKey, source, { agents: safeAgents }, safeAgents.length === 0, _agentsStaleAt, loadRevision);
+                                persistLoadedCatalog(runtimeContext, directoryKey, { agents: safeAgents }, _agentsStaleAt, loadRevision);
                                 clearProjectConfigError(directoryKey);
                                 return true;
                             }
@@ -3153,7 +3105,7 @@ export const useConfigStore = create<ConfigStore>()(
                                 agents: safeAgents.length,
                             });
                             markCatalogLoaded(_agentsLoadedAt, _agentsStaleAt, directoryKey, loadRevision);
-                            persistLoadedCatalog(runtimeContext, directoryKey, source, { agents: safeAgents }, safeAgents.length === 0, _agentsStaleAt, loadRevision);
+                            persistLoadedCatalog(runtimeContext, directoryKey, { agents: safeAgents }, _agentsStaleAt, loadRevision);
                             _agentsLoadErrors.delete(directoryKey);
                             clearProjectConfigError(directoryKey);
                             return true;
@@ -3989,6 +3941,12 @@ export const useConfigStore = create<ConfigStore>()(
                     updateDesktopSettings({ dictationEnabled: enabled }).catch(() => {});
                 },
 
+                setSttCorrectTranscript: (enabled: boolean) => {
+                    set({ sttCorrectTranscript: enabled });
+                    globalThis.localStorage?.setItem('sttCorrectTranscript', String(enabled));
+                    updateDesktopSettings({ sttCorrectTranscript: enabled }).catch(() => {});
+                },
+
                 setSttProvider: (provider: 'local' | 'openai-compatible') => {
                     set({ sttProvider: provider });
                     if (typeof window !== 'undefined') {
@@ -4223,7 +4181,8 @@ export const useConfigStore = create<ConfigStore>()(
                             const initialDirectory = opencodeClient.getDirectory()
                                 ?? useDirectoryStore.getState().currentDirectory
                                 ?? fromDirectoryKey(get().activeDirectoryKey);
-                            const resolvedProject = resolveProjectForSessionDirectory(
+                            // A space's directory loads no project config of the host (see resolveProjectDirectory).
+                            const resolvedProject = isSpaceDirectory(initialDirectory) ? null : resolveProjectForSessionDirectory(
                                 useProjectsStore.getState().projects,
                                 useSessionUIStore.getState().availableWorktreesByProject,
                                 initialDirectory ?? null,

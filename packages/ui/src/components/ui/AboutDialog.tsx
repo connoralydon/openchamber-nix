@@ -3,7 +3,10 @@ import {
   Dialog,
   DialogContent,
 } from '@/components/ui/dialog';
+import { useReducedMotion } from 'motion/react';
 import { OpenChamberLogo } from '@/components/ui/OpenChamberLogo';
+import { LevitatingLogo } from '@/components/ui/LevitatingLogo';
+import { useThemeSystem } from '@/contexts/useThemeSystem';
 import { debugUtils } from '@/lib/debug';
 import { cn } from '@/lib/utils';
 import { toast } from '@/components/ui';
@@ -13,6 +16,36 @@ import { getDesktopAppVersion } from '@/lib/desktopNative';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 
 const VERSION_SLOT = '\u0000';
+
+const LOGO_SIZE = 64;
+// Seven quick taps on the logo, the way a phone's build number unlocks developer options.
+const TAPS_TO_LEVITATE = 7;
+const TAP_GAP_MS = 700;
+
+const AboutLogo: React.FC = () => {
+  const { currentTheme } = useThemeSystem();
+  const reducedMotion = useReducedMotion();
+  const [levitating, setLevitating] = React.useState(false);
+  const tapsRef = React.useRef({ count: 0, at: 0 });
+  const stopLevitating = React.useCallback(() => setLevitating(false), []);
+
+  const handleTap = () => {
+    if (levitating || reducedMotion) return;
+    const now = performance.now();
+    const count = now - tapsRef.current.at < TAP_GAP_MS ? tapsRef.current.count + 1 : 1;
+    tapsRef.current = { count: count >= TAPS_TO_LEVITATE ? 0 : count, at: now };
+    if (count >= TAPS_TO_LEVITATE) setLevitating(true);
+  };
+
+  return (
+    <div className="relative select-none" onClick={handleTap}>
+      <OpenChamberLogo width={LOGO_SIZE} height={LOGO_SIZE} className={levitating ? 'invisible' : undefined} />
+      {levitating ? (
+        <LevitatingLogo size={LOGO_SIZE} color={currentTheme.colors.surface.foreground} onDone={stopLevitating} />
+      ) : null}
+    </div>
+  );
+};
 
 interface AboutDialogProps {
   open: boolean;
@@ -165,7 +198,7 @@ export const AboutDialog: React.FC<AboutDialogProps> = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xs p-6">
         <div className="flex flex-col items-center text-center space-y-4">
-          <OpenChamberLogo width={64} height={64} />
+          <AboutLogo />
 
           <div className="space-y-1">
             <h2 className="text-lg font-semibold">OpenChamber</h2>
@@ -230,7 +263,7 @@ export const AboutDialog: React.FC<AboutDialogProps> = ({
             </a>
           </div>
 
-          <p className="typography-meta text-muted-foreground/60 pt-2">
+          <p className="typography-meta text-muted-foreground pt-2">
             {t('aboutDialog.footerNote')}
           </p>
         </div>

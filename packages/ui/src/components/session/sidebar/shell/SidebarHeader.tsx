@@ -169,6 +169,8 @@ export function SidebarHeader(props: Props): React.ReactNode {
   const setShowPinnedSection = useSessionDisplayStore((state) => state.setShowPinnedSection);
   const detailedZoneRows = useSessionDisplayStore((state) => state.detailedZoneRows);
   const setDetailedZoneRows = useSessionDisplayStore((state) => state.setDetailedZoneRows);
+  const worktreeNameByBranch = useSessionDisplayStore((state) => state.worktreeNameByBranch);
+  const setWorktreeNameByBranch = useSessionDisplayStore((state) => state.setWorktreeNameByBranch);
   const sessionWorkEnabled = useUIStore((state) => state.sessionWorkEnabled);
   const projectSortOrder = useSessionDisplayStore((state) => state.projectSortOrder);
   const setProjectSortOrder = useSessionDisplayStore((state) => state.setProjectSortOrder);
@@ -277,6 +279,10 @@ export function SidebarHeader(props: Props): React.ReactNode {
       {toggleItem('sessions.sidebar.header.displayMode.detailedZoneRows', detailedZoneRows, () => {
         setDetailedZoneRows(!detailedZoneRows);
         void updateDesktopSettings({ sidebarDetailedZoneRows: !detailedZoneRows });
+      })}
+      {toggleItem('sessions.sidebar.header.displayMode.worktreeNameByBranch', worktreeNameByBranch, () => {
+        setWorktreeNameByBranch(!worktreeNameByBranch);
+        void updateDesktopSettings({ sidebarWorktreeNameByBranch: !worktreeNameByBranch });
       })}
     </>);
   }

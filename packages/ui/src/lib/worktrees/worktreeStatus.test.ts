@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, mock, test } from 'bun:test';
 // calls via plain arrays rather than `toHaveBeenCalled*`).
 let resolveRootImpl: (directory: string) => string | Promise<string> = (directory) => directory;
 let statusImpl: (directory: string) => { current: string } = () => ({ current: 'HEAD' });
+let checkoutsImpl: () => Array<{ path: string; branch: string }> = () => [];
+let defaultBranchesImpl: () => Record<string, string> | undefined = () => undefined;
 
 const resolveRootCalls: string[] = [];
 const statusCalls: string[] = [];
@@ -18,9 +20,40 @@ mock.module('@/lib/gitApi', () => ({
     resolveRootCalls.push(directory);
     return Promise.resolve(resolveRootImpl(directory));
   },
+  getGitBranches: () => Promise.resolve({ defaultBranches: defaultBranchesImpl() }),
+  git: { worktree: { list: () => Promise.resolve(checkoutsImpl()) } },
 }));
 
-const { canDeleteWorktreeWithoutConfirm, getRootBranch, invalidateResolvedProjectRootCache } = await import('./worktreeStatus');
+const { canDeleteWorktreeBranch, canDeleteWorktreeWithoutConfirm, getRootBranch, invalidateResolvedProjectRootCache } = await import('./worktreeStatus');
+
+describe('worktreeStatus.canDeleteWorktreeBranch', () => {
+  const worktree = { path: '/repo-wt', branch: 'main' };
+
+  beforeEach(() => {
+    checkoutsImpl = () => [{ path: '/repo', branch: 'dev' }, { path: '/repo-wt', branch: 'main' }];
+    defaultBranchesImpl = () => ({ origin: 'trunk' });
+  });
+
+  test('offers a branch no other checkout holds and no remote names as default', async () => {
+    expect(await canDeleteWorktreeBranch('/repo', worktree)).toBe(true);
+  });
+
+  test('never offers a branch another checkout holds', async () => {
+    checkoutsImpl = () => [{ path: '/repo', branch: 'main' }, { path: '/repo-wt', branch: 'main' }];
+    expect(await canDeleteWorktreeBranch('/repo', worktree)).toBe(false);
+  });
+
+  test("never offers a remote's default branch", async () => {
+    defaultBranchesImpl = () => ({ origin: 'main' });
+    expect(await canDeleteWorktreeBranch('/repo', worktree)).toBe(false);
+  });
+
+  test('offers nothing for a detached worktree or a failed read', async () => {
+    expect(await canDeleteWorktreeBranch('/repo', { path: '/repo-wt', branch: '' })).toBe(false);
+    checkoutsImpl = () => { throw new Error('git failed'); };
+    expect(await canDeleteWorktreeBranch('/repo', worktree)).toBe(false);
+  });
+});
 
 describe('worktreeStatus.canDeleteWorktreeWithoutConfirm', () => {
   test('allows only a clean worktree whose upstream has every commit', () => {

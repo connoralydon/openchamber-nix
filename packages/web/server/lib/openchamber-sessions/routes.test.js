@@ -183,32 +183,11 @@ const createMemoryArchiveStore = () => {
     failIds: (ids) => { failFor = new Set(ids); },
     entries,
     getAll: async () => Object.fromEntries(entries),
-    list: async () => Object.fromEntries(entries),
     entry: async (id) => entries.get(id),
     forget: async (ids) => {
-      for (const id of ids) entries.delete(id);
-      return { failedIds: [] };
-    },
-    archive: async (ids, archivedAt) => {
-      const stamp = Number.isSafeInteger(archivedAt) && archivedAt > 0 ? archivedAt : 1;
-      const archived = [];
-      const failedIds = [];
-      for (const id of ids) {
-        if (failFor.has(id)) { failedIds.push(id); continue; }
-        entries.set(id, stamp);
-        archived.push({ id, archivedAt: stamp });
-      }
-      return { archived, failedIds };
-    },
-    unarchive: async (ids) => {
-      const restored = [];
-      const failedIds = [];
-      for (const id of ids) {
-        if (failFor.has(id)) { failedIds.push(id); continue; }
-        entries.set(id, null);
-        restored.push({ id, archivedAt: null });
-      }
-      return { restored, failedIds };
+      const failedIds = ids.filter((id) => failFor.has(id) && entries.has(id));
+      for (const id of ids) if (!failedIds.includes(id)) entries.delete(id);
+      return { failedIds };
     },
   };
 };
@@ -308,29 +287,29 @@ describe('openchamber session routes', () => {
       expect(broadcastGlobalUiEvent).not.toHaveBeenCalled();
     });
 
-    it('keeps a session whose directory is gone in the archive file, and reports one OpenCode refused', async () => {
+    it('reports a session OpenCode refused or does not know as failed', async () => {
       sessionUpdateMock.mockImplementation(async ({ sessionID }) => {
-        if (sessionID === 'ses_gone') throw tagged('LocationNotFoundError');
+        if (sessionID === 'ses_down') throw tagged('UnknownError');
         if (sessionID === 'ses_missing') throw tagged('SessionNotFoundError');
       });
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
       const { app, archiveStore, broadcastGlobalUiEvent } = createApp();
 
       const response = await request(app)
         .post('/api/openchamber/sessions/archive')
-        .send({ ids: ['ses_a', 'ses_gone', 'ses_missing'], archivedAt: 1700 })
+        .send({ ids: ['ses_a', 'ses_down', 'ses_missing'], archivedAt: 1700 })
         .expect(200);
 
-      expect(response.body.archived.map((session) => session.id)).toEqual(['ses_a', 'ses_gone']);
-      expect(response.body.failedIds).toEqual(['ses_missing']);
-      await expect(archiveStore.getAll()).resolves.toEqual({ ses_gone: 1700 });
-      expect(broadcastGlobalUiEvent.mock.calls.map(([event]) => event)).toEqual([
-        { type: 'openchamber:session-archived', properties: { sessionID: 'ses_gone', archivedAt: 1700 } },
-      ]);
+      expect(response.body.archived.map((session) => session.id)).toEqual(['ses_a']);
+      expect(response.body.failedIds).toEqual(['ses_down', 'ses_missing']);
+      await expect(archiveStore.getAll()).resolves.toEqual({});
+      expect(broadcastGlobalUiEvent).not.toHaveBeenCalled();
     });
 
-    it('does not announce a session the file failed to store', async () => {
-      sessionUpdateMock.mockRejectedValue(tagged('LocationNotFoundError'));
+    it('does not announce a session whose old entry the file failed to drop', async () => {
       const archiveStore = createMemoryArchiveStore();
+      archiveStore.entries.set('ses_a', null);
+      archiveStore.entries.set('ses_b', null);
       archiveStore.failIds(['ses_b']);
       const { app, broadcastGlobalUiEvent } = createApp({ archiveStore });
 
@@ -460,23 +439,7 @@ describe('openchamber session routes', () => {
         .resolves.toMatchObject({ body: { metadata: {} } });
     });
 
-    it('answers SESSION_DIRECTORY_MISSING when OpenCode refuses the write because the folder is gone', async () => {
-      const locationNotFound = Object.assign(new Error('Location not found: /repo/wt-gone'), {
-        _tag: 'LocationNotFoundError',
-        location: { directory: '/repo/wt-gone' },
-      });
-      const persistSessionMetadata = vi.fn(async () => { throw locationNotFound; });
-      const { app } = createApp({ persistSessionMetadata });
-
-      const response = await request(app)
-        .post('/api/openchamber/sessions/ses_a/metadata')
-        .send({ patch: { openchamber: { work: { state: 'done' } } } })
-        .expect(409);
-
-      expect(response.body).toEqual({ error: 'Location not found: /repo/wt-gone', code: 'SESSION_DIRECTORY_MISSING' });
-    });
-
-    it('keeps any other failed write a plain error without the folder code', async () => {
+    it('answers a failed write with its message', async () => {
       const persistSessionMetadata = vi.fn(async () => { throw new Error('OpenCode is down'); });
       const { app } = createApp({ persistSessionMetadata });
 

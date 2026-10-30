@@ -1017,6 +1017,30 @@ describe('GitLab live summaries', () => {
     expect(client.Issues.show).toHaveBeenCalledWith(7, { projectId: 'group/sub/app' });
   });
 
+  it('details add the failed jobs and the newest notes people wrote, read only when asked', async () => {
+    const mr = { ...openMR, iid: 2, head_pipeline: { id: 90, project_id: 55, status: 'failed' } };
+    const jobs = vi.fn(async () => [{ name: 'lint' }, { name: '' }]);
+    const notes = vi.fn(async () => [
+      { system: true, author: { username: 'gitlab' }, created_at: '3' },
+      { system: false, author: { username: 'bob' }, created_at: '2' },
+    ]);
+    const { service } = setup({
+      MergeRequests: { ...setup().client.MergeRequests, show: vi.fn(async () => mr) },
+      Jobs: { all: jobs },
+      MergeRequestNotes: { all: notes },
+    });
+    const refs = [{ owner: 'group', repo: 'app', number: 2 }];
+
+    const { summaries: [plain] } = await service.liveSummaries({ refs });
+    expect(plain).not.toHaveProperty('failedChecks');
+    expect(jobs).not.toHaveBeenCalled();
+
+    const { summaries: [detailed] } = await service.liveSummaries({ refs, details: true });
+    expect(detailed).toMatchObject({ failedChecks: ['lint'], recentActivity: [{ author: 'bob', at: '2' }] });
+    expect(jobs).toHaveBeenCalledWith(55, expect.objectContaining({ pipelineId: 90, scope: 'failed' }));
+    expect(notes).toHaveBeenCalledWith('group/app', 2, expect.objectContaining({ sort: 'desc' }));
+  });
+
   it('fails the whole read when GitLab refuses the token', async () => {
     const refused = Object.assign(new Error('401 Unauthorized'), { cause: { response: { status: 401 } } });
     const { service } = setup({ MergeRequests: { ...setup().client.MergeRequests, show: vi.fn(async () => { throw refused; }) } });

@@ -36,9 +36,13 @@ import { disposePreviewAudio } from './voicePreviewAudio';
 import { toast } from '@/components/ui';
 import type { VoiceApiKeyKind } from '@/lib/voiceKeysApi';
 import { Spinner } from '@/components/ui/spinner';
+import { SettingsInlineLink } from '@/components/sections/classification/JevAccessNote';
+import { selectSmallModelAvailability, useSmallModelStore } from '@/stores/useSmallModelStore';
+import { useUIStore } from '@/stores/useUIStore';
 
 const VOICE_TEXT_INPUT_CLASS = 'oc-surface-elevated oc-raised oc-field w-full min-w-0 h-8 rounded-md bg-surface-elevated px-3 typography-ui-label text-foreground placeholder:text-muted-foreground focus:outline-none';
 
+// languageHint: the model takes the dictation language instead of detecting it.
 const LOCAL_STT_MODELS = [
     {
         id: 'parakeet-tdt-0.6b-v2-int8',
@@ -47,6 +51,7 @@ const LOCAL_STT_MODELS = [
         accuracy: 5,
         speed: 5,
         size: '460 MB',
+        languageHint: false,
     },
     {
         id: 'parakeet-tdt-0.6b-v3-int8',
@@ -55,14 +60,25 @@ const LOCAL_STT_MODELS = [
         accuracy: 5,
         speed: 4,
         size: '465 MB',
+        languageHint: false,
     },
     {
-        id: 'whisper-base-int8',
-        labelKey: 'settings.voice.page.stt.model.whisperBase',
+        id: 'whisper-large-v3-turbo-int8',
+        labelKey: 'settings.voice.page.stt.model.whisperTurbo',
         badgeKey: null,
-        accuracy: 3,
+        accuracy: 4,
+        speed: 1,
+        size: '1 GB',
+        languageHint: true,
+    },
+    {
+        id: 'qwen3-asr-0.6b-int8',
+        labelKey: 'settings.voice.page.stt.model.qwen3Asr',
+        badgeKey: null,
+        accuracy: 4,
         speed: 3,
-        size: '200 MB',
+        size: '1 GB',
+        languageHint: true,
     },
     {
         id: 'whisper-tiny-int8',
@@ -71,6 +87,7 @@ const LOCAL_STT_MODELS = [
         accuracy: 2,
         speed: 4,
         size: '115 MB',
+        languageHint: true,
     },
 ] as const;
 
@@ -99,21 +116,22 @@ const RatingBar = ({ value, label }: { value: number; label: string }) => (
 );
 
 const LocalModelPicker = ({
-    selectedModelId,
+    savedModelId,
     onSelect,
 }: {
-    selectedModelId: string;
+    savedModelId: string;
     onSelect: (modelId: string) => void;
 }) => {
     const { t } = useI18n();
     const tUnsafe = useCallback((key: string) => t(key as Parameters<typeof t>[0]), [t]);
     const [models, setModels] = useState<Map<string, DictationModelState>>(new Map());
+    const [activeModelId, setActiveModelId] = useState<string | null>(null);
     const [requestingId, setRequestingId] = useState<string | null>(null);
 
     const refresh = useCallback(async () => {
         try {
             const response = await runtimeFetch('/api/dictation/status', {
-                query: { provider: 'local' },
+                query: { provider: 'local', localModel: savedModelId },
             });
             if (!response.ok) {
                 return;
@@ -122,10 +140,15 @@ const LocalModelPicker = ({
             if (Array.isArray(data?.models)) {
                 setModels(new Map(data.models.map((m: DictationModelState) => [m.id, m])));
             }
+            setActiveModelId(data?.activeModel ?? null);
         } catch {
             // Display-only status; keep the previous state on fetch failure.
         }
-    }, []);
+    }, [savedModelId]);
+
+    // Until the user picks a model, or when the saved one left the list, the
+    // server chooses; show its choice as the selected one.
+    const selectedModelId = LOCAL_STT_MODELS.some((entry) => entry.id === savedModelId) ? savedModelId : activeModelId;
 
     useEffect(() => {
         void refresh();
@@ -272,6 +295,48 @@ const LocalModelPicker = ({
                 );
             })}
         </div>
+    );
+};
+
+const openSmallModelSettings = (): void => {
+    useUIStore.getState().requestSettingsJump('sessions', 'sessions.small-model');
+};
+
+/**
+ * Off by default: the pass sends the dictated text to the Small Model's
+ * provider. Without a Small Model the server inserts the text as heard, so
+ * the row says so instead of pretending to fix anything.
+ */
+const TranscriptCorrectionRow = () => {
+    const { t } = useI18n();
+    const enabled = useConfigStore((state) => state.sttCorrectTranscript);
+    const setEnabled = useConfigStore((state) => state.setSttCorrectTranscript);
+    const ensureSmallModel = useSmallModelStore((state) => state.ensureFresh);
+    const smallModel = useSmallModelStore((state) => selectSmallModelAvailability(state, null));
+
+    useEffect(() => {
+        if (enabled) {
+            void ensureSmallModel(null);
+        }
+    }, [enabled, ensureSmallModel]);
+
+    return (
+        <SettingsCheckboxRow
+            checked={enabled}
+            onChange={setEnabled}
+            label={t('settings.voice.page.field.correctTranscript')}
+            info={t('settings.voice.page.field.correctTranscriptInfo')}
+            footer={enabled ? (
+                <p className={SETTINGS_HELPER_CLASS}>
+                    {smallModel === 'unavailable' ? (
+                        <>{t('settings.voice.page.field.correctTranscriptUnavailable')}{' '}</>
+                    ) : null}
+                    <SettingsInlineLink onClick={openSmallModelSettings}>
+                        {t('settings.voice.page.field.correctTranscriptModelLink')}
+                    </SettingsInlineLink>
+                </p>
+            ) : null}
+        />
     );
 };
 
@@ -1354,7 +1419,23 @@ export const VoiceSettings: React.FC = () => {
 
                         {sttProvider === 'local' && (
                             <SettingsStackedField label={t('settings.voice.page.field.model')} controlClassName="max-w-none">
-                                <LocalModelPicker selectedModelId={sttLocalModel} onSelect={setSttLocalModel} />
+                                <LocalModelPicker savedModelId={sttLocalModel} onSelect={setSttLocalModel} />
+                            </SettingsStackedField>
+                        )}
+
+                        {sttProvider === 'local' && LOCAL_STT_MODELS.find((entry) => entry.id === sttLocalModel)?.languageHint && (
+                            <SettingsStackedField
+                                label={t('settings.voice.page.field.language')}
+                                info={t('settings.voice.page.field.sttLanguageHint')}
+                                controlClassName="max-w-[8rem]"
+                            >
+                                <input
+                                    type="text"
+                                    value={sttLanguage}
+                                    onChange={(e) => setSttLanguage(e.target.value)}
+                                    placeholder="auto"
+                                    className={VOICE_TEXT_INPUT_CLASS}
+                                />
                             </SettingsStackedField>
                         )}
 
@@ -1417,6 +1498,8 @@ export const VoiceSettings: React.FC = () => {
                                 </SettingsStackedField>
                             </div>
                         )}
+
+                        <TranscriptCorrectionRow />
                     </>
                 )}
             </SettingsSection>

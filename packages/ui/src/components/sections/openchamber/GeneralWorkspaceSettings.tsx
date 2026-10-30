@@ -193,6 +193,8 @@ const TerminalSection: React.FC = () => {
   const setTerminalLoginShells = useUIStore((state) => state.setTerminalLoginShells);
   const showTerminalQuickKeysOnDesktop = useUIStore((state) => state.showTerminalQuickKeysOnDesktop);
   const setShowTerminalQuickKeysOnDesktop = useUIStore((state) => state.setShowTerminalQuickKeysOnDesktop);
+  const terminalCloseOnExit = useUIStore((state) => state.terminalCloseOnExit);
+  const setTerminalCloseOnExit = useUIStore((state) => state.setTerminalCloseOnExit);
   const [availableTerminalShells, setAvailableTerminalShells] = React.useState<TerminalShellOption[]>([]);
   const [terminalShellRuntimeEpoch, setTerminalShellRuntimeEpoch] = React.useState(0);
 
@@ -250,32 +252,38 @@ const TerminalSection: React.FC = () => {
           </SelectContent>
         </Select>
       </SettingsFieldRow>
-      {terminalShellSupportsLogin || !isMobile ? (
-        <div className={SETTINGS_OPTION_STACK_CLASS}>
-          {terminalShellSupportsLogin ? (
-            <SettingsCheckboxRow
-              checked={terminalLoginShellEnabled}
-              onChange={setTerminalLoginShellEnabled}
-              label={t('settings.openchamber.visual.field.terminalLoginShell')}
-              ariaLabel={t('settings.openchamber.visual.field.terminalLoginShell')}
-              settingsItem="appearance.terminal-login-shell"
-            />
-          ) : null}
-          {!isMobile ? (
-            <SettingsCheckboxRow
-              checked={showTerminalQuickKeysOnDesktop}
-              onChange={setShowTerminalQuickKeysOnDesktop}
-              label={t('settings.openchamber.visual.field.terminalQuickKeys')}
-              ariaLabel={t('settings.openchamber.visual.field.terminalQuickKeysAria')}
-              settingsItem="appearance.terminal-quick-keys"
-              info={t('settings.openchamber.visual.field.terminalQuickKeysTooltip', {
-                control: formatShortcutForDisplay('ctrl'),
-                alt: formatShortcutForDisplay('alt'),
-              })}
-            />
-          ) : null}
-        </div>
-      ) : null}
+      <div className={SETTINGS_OPTION_STACK_CLASS}>
+        {terminalShellSupportsLogin ? (
+          <SettingsCheckboxRow
+            checked={terminalLoginShellEnabled}
+            onChange={setTerminalLoginShellEnabled}
+            label={t('settings.openchamber.visual.field.terminalLoginShell')}
+            ariaLabel={t('settings.openchamber.visual.field.terminalLoginShell')}
+            settingsItem="appearance.terminal-login-shell"
+          />
+        ) : null}
+        <SettingsCheckboxRow
+          checked={terminalCloseOnExit}
+          onChange={setTerminalCloseOnExit}
+          label={t('settings.openchamber.visual.field.terminalCloseOnExit')}
+          ariaLabel={t('settings.openchamber.visual.field.terminalCloseOnExit')}
+          info={t('settings.openchamber.visual.field.terminalCloseOnExitInfo')}
+          settingsItem="appearance.terminal-close-on-exit"
+        />
+        {!isMobile ? (
+          <SettingsCheckboxRow
+            checked={showTerminalQuickKeysOnDesktop}
+            onChange={setShowTerminalQuickKeysOnDesktop}
+            label={t('settings.openchamber.visual.field.terminalQuickKeys')}
+            ariaLabel={t('settings.openchamber.visual.field.terminalQuickKeysAria')}
+            settingsItem="appearance.terminal-quick-keys"
+            info={t('settings.openchamber.visual.field.terminalQuickKeysTooltip', {
+              control: formatShortcutForDisplay('ctrl'),
+              alt: formatShortcutForDisplay('alt'),
+            })}
+          />
+        ) : null}
+      </div>
     </SettingsSection>
   );
 };
@@ -286,6 +294,8 @@ const PanelsAndLinksSection: React.FC = () => {
   const { isMobile } = useDeviceInfo();
   const sessionTabsEnabled = useUIStore((state) => state.sessionTabsEnabled);
   const setSessionTabsEnabled = useUIStore((state) => state.setSessionTabsEnabled);
+  const sessionTabsPerWorkspace = useUIStore((state) => state.sessionTabsPerWorkspace);
+  const setSessionTabsPerWorkspace = useUIStore((state) => state.setSessionTabsPerWorkspace);
   const layoutAnimations = useUIStore((state) => state.layoutAnimations);
   const setLayoutAnimations = useUIStore((state) => state.setLayoutAnimations);
   const openLinksInBrowserPanel = useUIStore((state) => state.openLinksInBrowserPanel);
@@ -305,6 +315,16 @@ const PanelsAndLinksSection: React.FC = () => {
           ariaLabel={t('settings.openchamber.visual.field.sessionTabsAria')}
           info={t('settings.openchamber.visual.field.sessionTabsInfo')}
           settingsItem="appearance.session-tabs"
+        />
+      ) : null}
+      {!isMobile && sessionTabsEnabled ? (
+        <SettingsCheckboxRow
+          checked={sessionTabsPerWorkspace}
+          onChange={setSessionTabsPerWorkspace}
+          label={t('settings.openchamber.visual.field.sessionTabsPerWorkspace')}
+          ariaLabel={t('settings.openchamber.visual.field.sessionTabsPerWorkspaceAria')}
+          info={t('settings.openchamber.visual.field.sessionTabsPerWorkspaceInfo')}
+          className="ps-6"
         />
       ) : null}
       {!isMobile ? (

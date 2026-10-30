@@ -29,6 +29,6 @@ Everything is process-local: reloading the UI empties the renderer buffer, resta
 
 ## OpenCode memory snapshot
 
-Under the timeline the dialog has "Save OpenCode memory snapshot" (`components/ui/OpenCodeHeapSnapshot.tsx`). It calls `opencodeClient.writeHeapSnapshot()`, OpenCode's `POST /api/debug/heap-dump` (2.1.4), which writes a V8 heap snapshot of the OpenCode server into OpenCode's log directory and answers with the path. The route takes no location, so it starts no MCP servers; OpenCode pauses while the heap serializes. Against an older OpenCode the route answers 404 and the row says which version it needs.
+Under the timeline the dialog has "Save OpenCode memory snapshot" (`components/ui/OpenCodeHeapSnapshot.tsx`). It calls `opencodeClient.writeHeapSnapshot()`, OpenCode's `POST /api/debug/heap-dump`, which writes a V8 heap snapshot of the OpenCode server into OpenCode's log directory and answers with the path. The route takes no location, so it starts no MCP servers; OpenCode pauses while the heap serializes.
 
 The snapshot stays a file on the OpenCode machine and never enters the diagnostic log or any upload: it can hold API keys, prompts and file contents, which is what the row's hint tells the user before they share it. On the local desktop the row offers "Show in folder" (`revealDesktopPath`); in a browser, or connected to another machine, the path may not be on this computer, so it offers "Copy path".

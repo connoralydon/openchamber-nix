@@ -835,6 +835,13 @@ export async function deleteGitBranch(directory: string, branch: string, force =
  * Delete a remote branch
  */
 export async function deleteRemoteBranch(directory: string, branch: string, remote = 'origin'): Promise<{ success: boolean }> {
+  // Mirrors the server's network operation: the remote's default branch is never
+  // deleted, and the remote itself says which branch its HEAD names.
+  const head = await execGit(['ls-remote', '--symref', '--', remote, 'HEAD'], directory);
+  if (head.exitCode !== 0) return { success: false };
+  if (/^ref: (\S+)\tHEAD$/m.exec(head.stdout)?.[1] === `refs/heads/${branch.replace(/^refs\/heads\//, '')}`) {
+    throw new Error("The remote's default branch can't be deleted");
+  }
   const result = await execGit(['push', '--delete', '--', remote, branch], directory);
   return { success: result.exitCode === 0 };
 }
@@ -1486,6 +1493,20 @@ const findBranchInUse = async (primaryWorktree: string, localBranchName: string)
     const entryClean = cleanBranchName(entryRef || entry.branch || '');
     return entryRef === targetRef || entryClean === targetClean;
   }) || null;
+};
+
+// Mirrors packages/web/server/lib/git/service.js isBranchKeptOnWorktreeRemoval:
+// removing a worktree never deletes the default branch of a remote or a branch
+// another checkout holds.
+const isBranchKeptOnWorktreeRemoval = async (primaryWorktree: string, branchName: string): Promise<boolean> => {
+  if (await findBranchInUse(primaryWorktree, branchName)) return true;
+  const refs = await runGitCommand(primaryWorktree, ['for-each-ref', '--format=%(refname) %(symref)', 'refs/remotes']);
+  if (!refs.success) return false;
+  return refs.stdout.split('\n').some((line) => {
+    const [ref = '', symbolicRef = ''] = line.trim().split(' ');
+    const remote = /^refs\/remotes\/([^/]+)\/HEAD$/.exec(ref)?.[1];
+    return Boolean(remote) && symbolicRef === `refs/remotes/${remote}/${branchName}`;
+  });
 };
 
 const runWorktreeStartCommand = async (directory: string, command: string): Promise<{ success: boolean; message?: string; stdout?: string; stderr?: string }> => {
@@ -2474,7 +2495,7 @@ export async function removeWorktree(directory: string, input: RemoveGitWorktree
 
   if (deleteLocalBranch) {
     const branchName = cleanBranchName(String(matchedEntry.branchRef || matchedEntry.branch || '').trim());
-    if (branchName) {
+    if (branchName && !(await isBranchKeptOnWorktreeRemoval(context.primaryWorktree, branchName))) {
       await runGitCommandOrThrow(
         context.primaryWorktree,
         ['branch', '-D', branchName],

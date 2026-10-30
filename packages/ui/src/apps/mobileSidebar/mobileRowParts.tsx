@@ -142,20 +142,26 @@ export const MobileSwipeAction: React.FC<{
 );
 
 /**
- * Show more / Show fewer under a list, aligned with the text of its rows, a
- * step quieter than the muted titles above it, as on the desktop.
+ * Show more and Show less under a list, side by side, aligned with the text of
+ * its rows, a step quieter than the muted titles above it, as on the desktop.
  */
-export const MobileShowControl: React.FC<{ more: boolean; indent: number; onClick: () => void }> = ({ more, indent, onClick }) => {
+export const MobileShowControl: React.FC<{ more: boolean; fewer: boolean; indent: number; onShow: (control: 'more' | 'fewer') => void }> = ({ more, fewer, indent, onShow }) => {
   const { t } = useI18n();
-  return (
+  const control = (kind: 'more' | 'fewer') => (
     <button
       type="button"
-      className="flex min-h-9 w-full items-center gap-2 py-1 pe-3 text-start text-muted-foreground/60 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-      style={{ paddingInlineStart: indent, touchAction: 'manipulation' }}
-      onClick={onClick}
+      className="flex min-h-9 items-center gap-2 py-1 pe-3 text-start text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      style={{ touchAction: 'manipulation' }}
+      onClick={() => onShow(kind)}
     >
-      <Icon name={more ? 'arrow-down-s' : 'arrow-up-s'} className="size-4" />
-      <span className="typography-micro">{t(more ? 'sessions.sidebar.group.showMore' : 'sessions.sidebar.group.showFewer')}</span>
+      <Icon name={kind === 'more' ? 'arrow-down-s' : 'arrow-up-s'} className="size-4" />
+      <span className="typography-micro">{t(kind === 'more' ? 'sessions.sidebar.group.showMore' : 'sessions.sidebar.group.showFewer')}</span>
     </button>
+  );
+  return (
+    <div className="flex w-full items-center gap-2" style={{ paddingInlineStart: indent }}>
+      {more ? control('more') : null}
+      {fewer ? control('fewer') : null}
+    </div>
   );
 };

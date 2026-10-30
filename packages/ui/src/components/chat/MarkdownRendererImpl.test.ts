@@ -159,6 +159,30 @@ test('on the phone a file link also opens the files drawer (#5486)', async () =>
   }
 });
 
+test('a file:// folder link opens in the file manager in the desktop app only, as the Files tree reveal does (#5521)', async () => {
+  const { RuntimeAPIContext } = await import('@/contexts/runtimeAPIContext');
+  const { createWebAPIs } = await import('../../../../web/src/api/index');
+  const web = createWebAPIs();
+  const revealed: string[] = [];
+  const files = { ...web.files, revealPath: async (path: string) => { revealed.push(path); return { success: true }; } };
+  const content = React.createElement(Renderer.MarkdownContent, { content: '[Open the test folder](file:///Users/me/some_path/)', directory: '/project', enableFileReferences: true, settled: true });
+  // Electron reports the web platform and differs from a browser only by its shell.
+  const surfaces = [['browser', 'web', false], ['vscode', 'vscode', false], ['desktop', 'web', true]] as const;
+  try {
+    for (const [surface, platform, electron] of surfaces) {
+      Object.assign(window, { __OPENCHAMBER_ELECTRON__: electron ? { runtime: 'electron' } : undefined });
+      const apis = { ...web, files, runtime: { ...web.runtime, platform } };
+      await act(() => root.render(React.createElement(I18nProvider, null, React.createElement(RuntimeAPIContext.Provider, { value: apis }, content))));
+      const event = new window.MouseEvent('click', { bubbles: true, cancelable: true });
+      host.querySelector('a')?.dispatchEvent(event);
+      expect([surface, event.defaultPrevented]).toEqual([surface, electron]);
+    }
+    expect(revealed).toEqual(['/Users/me/some_path/']);
+  } finally {
+    Object.assign(window, { __OPENCHAMBER_ELECTRON__: undefined });
+  }
+});
+
 test('remote media labels use chat navigation and retain modified-click defaults', async () => {
   openedLinks.length = 0;
   await render('![remote](https://example.com/image.png)');
@@ -283,8 +307,9 @@ test('Mermaid preserves the view across themes and restores controls and ASCII c
   const original = svg?.outerHTML;
   expect(original).toContain('var(--surface-foreground)');
   const toolbar = host.querySelector('[data-streamdown="mermaid-toolbar"]');
-  expect(toolbar?.classList.contains('absolute')).toBe(true);
-  expect(Array.from(toolbar?.querySelectorAll('button') ?? [], (button) => button.title))
+  // A row of its own above the diagram, never inside the block it would cover.
+  expect(toolbar?.closest('[data-streamdown="mermaid-block"]')).toBeNull();
+  expect(Array.from(toolbar?.querySelectorAll('button') ?? [], (button) => button.getAttribute('aria-label')))
     .toEqual(['Zoom in', 'Zoom out', 'Reset view', 'Copy', 'Download SVG']);
 
   // An early user action flushes the pending initial fit before the saved view.
@@ -307,7 +332,7 @@ test('Mermaid preserves the view across themes and restores controls and ASCII c
     const copy = host.querySelector<HTMLButtonElement>('[data-streamdown="mermaid-toolbar"] button');
     await act(async () => copy?.click());
     expect(write.mock.calls.at(-1)?.[0]).toBe(ascii?.textContent);
-    expect(copy?.title).toBe('Copied');
+    expect(copy?.getAttribute('aria-label')).toBe('Copied');
     expect(host.querySelector('[data-streamdown="mermaid-block"]')?.getAttribute('data-mermaid-render')).toBe('ascii');
   } finally {
     write.mockRestore();

@@ -47,7 +47,30 @@ switched on, room beside the chat (`roomy`, see below), and something to
 show. It stays reserved while the context panel covers it, so closing the
 panel goes straight back to the card's column instead of to nothing first.
 
+When the chat area also fits the context panel (`roomyBesidePanel`), the card
+keeps its column beside the open panel (`besidePanel`). The slot then grows
+to the panel plus the card's column, the card's host anchors to the slot's
+start and the panel card is offset past it, so the card stays between the
+chat and the panel. Opening the panel slides it in from the window's edge
+while the card moves with the chat's edge; closing reverses that. The
+answer is known while the panel is closed too, so the commit that opens it
+already animates to the final width.
+
+The card has the lowest priority in the row: it claims no room from the left
+zone and never makes the session sidebar fold. A panel dragged wider stops
+where the chat would drop under its own minimum next to the card, and the card
+yields once the panel is released wider than it fits beside.
+
 The overlay form stays inside the chat column in `ChatContainer`.
+
+### Why the card docks beside the panel instead of floating over the chat
+
+A pinned card that floats over the transcript while a side panel is open was
+weighed against it. Floating covers the transcript it reports on and needs an
+opaque surface over moving text plus a rule for narrow windows. Docking uses
+room the window already has and adds no setting: where the room is missing,
+the card yields exactly as it did before, and the header still offers the
+overlay.
 
 ## Visibility
 
@@ -56,15 +79,23 @@ The overlay form stays inside the chat column in `ChatContainer`.
 - the user switched it off;
 - the runtime is mobile or VS Code (the phone shows the sections in its own
   tab, see below);
-- the context panel is open for the directory the app is effectively on —
-  looked up through `useEffectiveDirectory` and `normalizeContextPanelDirectoryKey`,
-  the same key the rail and the panel use. It is deliberately **not** the
-  directory this panel reports about: a managed Chat reports about none, and
-  that empty key answered "closed" for a context panel that was plainly open;
 - the row cannot fit `WORK_STATUS_MIN_CHAT_WIDTH` of transcript alongside
-  `WORK_STATUS_PANEL_WIDTH` of panel. Only that threshold decision is state
-  (`roomy`); the width itself is not, because it changes on every frame of a
-  sidebar animation and storing it re-rendered the whole chat each frame.
+  `WORK_STATUS_PANEL_WIDTH` of panel. Only the threshold decisions are state
+  (`roomy`, `roomyBesidePanel`); the width itself is not, because it changes
+  on every frame of a sidebar animation and storing it re-rendered the whole
+  chat each frame;
+- the right zone's context panel is open and the row cannot also fit that
+  panel at its own width (`sideZoneWidth`: the zone's stored size, or the tree
+  width for Files showing only its tree), or the panel is expanded. The panel
+  is looked up for the directory the app is effectively on, through
+  `useEffectiveDirectory` and `normalizeContextPanelDirectoryKey`, the same
+  key the rail and the panel use. It is deliberately **not** the directory
+  this panel reports about: a managed Chat reports about none, and that empty
+  key answered "closed" for a context panel that was plainly open.
+
+The panel's width comes from the store, never from the DOM: it is the user's
+setting, so a resize or a surface switch moves the threshold and the last
+area reading is re-decided before paint.
 
 `ChatContainer` additionally suppresses it in mini-chat and in expanded-input
 mode. It remains available on a new-session draft: when the draft targets a

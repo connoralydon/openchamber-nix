@@ -1078,7 +1078,7 @@ export function registerProviderRoutes(app, {
      * instance's current account when the named one no longer resolves
      * (`orCurrent`); GitHub does, GitLab does not.
      */
-    readLiveSummaries: async ({ provider, instance, accountId = null, refs, issueRefs, discussionRefs = [] }) => {
+    readLiveSummaries: async ({ provider, instance, accountId = null, refs, issueRefs, discussionRefs = [], details = false }) => {
       const impl = await loadImplementation(requireProvider(provider));
       // A host without discussions is never asked about them; they stay unanswered (unknown).
       const askedDiscussions = providers.describe(provider).capabilities.discussions === true ? discussionRefs : [];
@@ -1092,7 +1092,7 @@ export function registerProviderRoutes(app, {
         if (error?.sourceControlAccountUnavailable) return { connected: false };
         throw error;
       }
-      return { connected: true, ...(await impl.resources.liveSummaries({ session, refs, issueRefs, discussionRefs: askedDiscussions })) };
+      return { connected: true, ...(await impl.resources.liveSummaries({ session, refs, issueRefs, discussionRefs: askedDiscussions, details })) };
     },
     /** `revision` (40-hex) only for a provider that keeps revisions; others refuse it with 400. */
     readChangeRequestPatch: async ({ context, number, sourceRepo, revision }) => readWithBoundAccount(

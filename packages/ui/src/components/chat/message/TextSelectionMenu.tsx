@@ -12,8 +12,10 @@ import { toast } from '@/components/ui';
 import { Icon } from "@/components/icon/Icon";
 import { PROJECT_NOTE_BODY_MAX_LENGTH } from '@/lib/projectContextApi';
 import { useProjectContextStore } from '@/stores/useProjectContextStore';
+import { useSnippetsStore } from '@/stores/useSnippetsStore';
 import { summarizeSelectionForNotes } from '@/lib/smallModel';
 import { resolveProjectForSessionDirectory } from '@/lib/projectResolution';
+import { useSpaceProjectDirectory } from '@/lib/spaces/spaces-store';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { useI18n } from '@/lib/i18n';
@@ -699,11 +701,12 @@ const TextSelectionMenuImpl: React.FC<TextSelectionMenuProps> = ({ containerRef,
     });
   }, [addContextDraft, attachCitedImages, commentText, currentSessionId, effectiveDirectory, focusColumnInput, hideMenu, newSessionDraftOpen, selectedAnchor, selectedMessageId, selectedTextMarkdown, t]);
 
+  const selectionDirectory = effectiveDirectory ?? currentSessionDirectory ?? '';
+  const spaceProjectDirectory = useSpaceProjectDirectory(selectionDirectory);
   const currentProjectRef = React.useMemo(() => {
-    const directory = effectiveDirectory ?? currentSessionDirectory ?? '';
-    const resolved = resolveProjectForSessionDirectory(projects, availableWorktreesByProject, directory);
+    const resolved = resolveProjectForSessionDirectory(projects, availableWorktreesByProject, selectionDirectory, spaceProjectDirectory);
     return resolved ? { id: resolved.id, path: resolved.path } : null;
-  }, [availableWorktreesByProject, currentSessionDirectory, effectiveDirectory, projects]);
+  }, [availableWorktreesByProject, projects, selectionDirectory, spaceProjectDirectory]);
 
   const handleAddToNotes = React.useCallback(async () => {
     if (!selectedText || !currentProjectRef) {
@@ -744,6 +747,14 @@ const TextSelectionMenuImpl: React.FC<TextSelectionMenuProps> = ({ containerRef,
       setIsAddingToNotes(false);
     }
   }, [currentProjectRef, currentSessionId, hideMenu, selectedText, selectedTextMarkdown, t]);
+
+  const handleSaveAsSnippet = React.useCallback(() => {
+    const content = selectedTextMarkdown || selectedText;
+    if (!content) return;
+    useSnippetsStore.getState().openQuickCreate({ content });
+    hideMenu();
+    window.getSelection()?.removeAllRanges();
+  }, [hideMenu, selectedText, selectedTextMarkdown]);
 
   if (!position.show) return null;
 
@@ -882,7 +893,7 @@ const TextSelectionMenuImpl: React.FC<TextSelectionMenuProps> = ({ containerRef,
             ) : null}
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-wrap gap-2 [&>button]:flex-[1_1_40%]">
             {currentSessionId ? (
               <button
                 onClick={handleAskOpenChamber}
@@ -919,6 +930,22 @@ const TextSelectionMenuImpl: React.FC<TextSelectionMenuProps> = ({ containerRef,
                 <span className="min-w-0 whitespace-normal">{t('chat.textSelection.actions.addToNotes')}</span>
               </button>
             ) : null}
+
+            <button
+              onClick={handleSaveAsSnippet}
+              className={cn(
+                'flex min-w-0 items-center gap-2 rounded-xl px-3 py-2.5 text-start',
+                'text-sm font-medium leading-tight',
+                'bg-foreground/[0.04] text-foreground',
+                'active:opacity-80',
+                'transition-opacity duration-150'
+              )}
+              title={t('snippets.quickCreate.action')}
+              type="button"
+            >
+              <Icon name="hashtag" className="h-5 w-5 flex-shrink-0" />
+              <span className="min-w-0 whitespace-normal">{t('snippets.quickCreate.action')}</span>
+            </button>
           </div>
         </div>
       </div>,
@@ -1011,6 +1038,22 @@ const TextSelectionMenuImpl: React.FC<TextSelectionMenuProps> = ({ containerRef,
               </button>
             </>
           ) : null}
+
+          <div className="mx-0.5 h-5 w-px shrink-0 bg-[var(--interactive-border)]" />
+          <button
+            onClick={handleSaveAsSnippet}
+            className={cn(
+              'flex h-8 w-8 items-center justify-center rounded-full',
+              'text-foreground',
+              'hover:bg-[var(--interactive-hover)]',
+              'transition-colors duration-150'
+            )}
+            aria-label={t('snippets.quickCreate.action')}
+            title={t('snippets.quickCreate.action')}
+            type="button"
+          >
+            <Icon name="hashtag" className="h-4 w-4" />
+          </button>
 
           {canReadAloud ? (
             <>

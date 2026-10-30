@@ -381,7 +381,12 @@ describe('bridge git special runtime', () => {
   });
 
   describe('while the model is still loading', () => {
-    const unavailable = { _tag: 'InvalidRequestError', message: 'Model unavailable: anthropic/claude-sonnet-4-5' };
+    const unavailable = {
+      _tag: 'ModelNotFoundError',
+      providerID: 'anthropic',
+      modelID: 'claude-sonnet-4-5',
+      message: 'Model not found: anthropic/claude-sonnet-4-5',
+    };
     const request = () => handleSpecialGitBridgeMessage({
       id: '3',
       type: 'api:git/pr-description',

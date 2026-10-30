@@ -210,6 +210,22 @@ one attribute per moved
 control; the menu reads them when it opens and shows a check beside each view
 option that is on.
 
+## Files toolbar
+
+The Files editor's row (`renderFileToolbar`, an `ActionToolbar`) has the actions
+the open file's type allows, the same in every mode: save state, the mode
+toggle, the source tools (find, go to line, symbols, line wrap, read aloud),
+the file's actions, and full screen. A tool the current mode cannot run opens
+the source editor first: go to line from a preview switches to the editor and
+opens the field there. Find in a Markdown preview searches the preview. A
+read-only code file has no editor, so it gets no source tools. Go to line and
+symbols close when a preview replaces the editor.
+
+Save state keeps one slot as wide as its widest text, also in previews, so
+saving moves nothing beside it; a canvas or draw.io preview puts its own save
+button there. Auto-save lives in "More actions" as a setting. HTML annotation
+from the source switches to the preview and starts once the page has loaded.
+
 ## Large text files
 
 The 200,000-character threshold selects an initial code preview, not read-only
@@ -317,11 +333,18 @@ the files on disk.
 
 A file's header in Changes, mobile Changes and the walkthrough also takes a
 comment on the whole file (`components/comments/useWholeFileComment.tsx`): a
-diff draft with lines 0-0, the same origin, and no code. Its editor and saved
-cards render under the header, never inside the diff, so the viewer filters
-those drafts out of its line annotations. The trigger is always visible, like
+diff draft with lines 0-0, the same origin, and no code. Its saved cards
+render under the header, never inside the diff, so the viewer filters those
+drafts out of its line annotations. Its editor renders inside the sticky
+header itself (mobile's header is fixed above the scroller anyway): opened
+from a file scrolled far down, an editor under the header in the flow sat at
+the file's top, out of view. The trigger is always visible, like
 the header's other actions, and toggles the editor: a second click closes it
 unsaved, so an empty editor never stays stuck open.
+Files view takes the same comment from its toolbar, as a `file` draft beside
+its line comments. Its editor and cards sit between the toolbar and the
+scroller, so they stay on screen at any scroll; the CodeMirror line widgets
+filter those drafts out, and the fullscreen overlay shows them while it is open.
 Changes hands its PR source to walkthrough; walkthrough's Changes action opens
 PR mode with the shared selection. Picking a PR never generates a walkthrough.
 
@@ -419,3 +442,15 @@ sessions, as on the desktop. Restore and a worktree's Delete are always shown,
 as nothing hovers; rows name their group only in the lists that mix groups.
 Deleting a session stays on the desktop, whose confirmation dialog the mobile
 shell does not mount.
+
+## Terminal tabs whose shell exits
+
+When the process of a terminal tab exits (`exit`, Ctrl-D, a project action that
+ends or is stopped), `TerminalView` closes the tab and releases its server
+session, the same as clicking its close button; the last tab closes the panel.
+The `terminalCloseOnExit` setting turns this off, and the tab then stays with
+its output and the exit line, which is how a dev server's log stays readable
+after it stops. The check runs on the live `exit` event and on a snapshot that
+reports `exited`, so a tab whose process ended while the panel was closed goes
+away when it is shown. VS Code has neither tabs nor the setting and keeps the
+exited terminal.

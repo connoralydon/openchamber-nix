@@ -27,7 +27,6 @@ import { AutocompleteRowDetail } from './composer/ui/AutocompleteRowParts';
 import { rankSessionMentions } from './sessionMentionResults';
 import type { Session } from '@/lib/opencode/model';
 import { ensureGlobalSessionsLoaded, resolveGlobalSessionDirectory, useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
-import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useAutocompleteSelectionScroll } from './composer/ui/useAutocompleteSelectionScroll';
 
 /** Subagents listed before the user types; the rest are a keystroke away. */
@@ -51,6 +50,8 @@ interface FileMentionAutocompleteProps {
   onAgentSelect?: (agentName: string) => void;
   /** Lists other sessions by title once the user types; without it, none. */
   onSessionSelect?: (session: Session) => void;
+  /** The session being written in, which the session list leaves out. */
+  currentSessionId?: string | null;
   onClose: () => void;
   style?: React.CSSProperties;
 }
@@ -60,6 +61,7 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
   onFileSelect,
   onAgentSelect,
   onSessionSelect,
+  currentSessionId = null,
   onClose,
   style,
 }, ref) => {
@@ -105,9 +107,12 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
       mode: agent.mode,
     }))
     .sort((a, b) => a.name.localeCompare(b.name)), [configAgents]);
+  // The trigger lets a space through only for a session title; paths and
+  // agent names hold none, so such a query lists sessions alone.
+  const sessionsOnly = (searchQuery ?? '').includes(' ');
   const agents = React.useMemo(
-    () => rankByQuery(subagents, searchQuery ?? '', (agent) => [agent.name, agent.displayName, agent.description]),
-    [searchQuery, subagents],
+    () => sessionsOnly ? [] : rankByQuery(subagents, searchQuery ?? '', (agent) => [agent.name, agent.displayName, agent.description]),
+    [searchQuery, sessionsOnly, subagents],
   );
   const [loading, setLoading] = React.useState(false);
   const pendingSearchRef = React.useRef(0);
@@ -137,7 +142,7 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
   }, [currentDirectory]);
 
   const recentFiles = React.useMemo(() => {
-    if (!projectRoot || !projectTabs) {
+    if (sessionsOnly || !projectRoot || !projectTabs) {
       return [] as FileInfo[];
     }
 
@@ -170,7 +175,7 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
       });
 
     return mapped;
-  }, [normalizedSearchQuery, projectRoot, projectTabs]);
+  }, [normalizedSearchQuery, projectRoot, projectTabs, sessionsOnly]);
 
   const recentCandidatePathsKey = React.useMemo(
     () => recentFiles.map((file) => file.path).join('\n'),
@@ -230,7 +235,6 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
     () => normalizedSearchQuery.length > 0 ? agents : agents.slice(0, AGENTS_SHOWN_WITHOUT_QUERY),
     [agents, normalizedSearchQuery.length],
   );
-  const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
   // Ranked from a snapshot per query (and once more when the list arrives),
   // not the live list: other sessions update all the time, which must neither
   // re-rank thousands of titles nor move the row under the keyboard.
@@ -249,8 +253,8 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
     [recentFiles, staleRecentPaths],
   );
   const visibleResults = React.useMemo(
-    () => rankFileMentionResults(files, directories, normalizedSearchQuery, 20),
-    [files, directories, normalizedSearchQuery],
+    () => sessionsOnly ? [] : rankFileMentionResults(files, directories, normalizedSearchQuery, 20),
+    [files, directories, normalizedSearchQuery, sessionsOnly],
   );
 
   React.useEffect(() => {
@@ -279,7 +283,7 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
 
     const serverQuery = mentionServerQuery(debouncedQuery ?? '');
 
-    if (!serverQuery) {
+    if (!serverQuery || (debouncedQuery ?? '').includes(' ')) {
       setFiles([]);
       return;
     }
@@ -333,7 +337,7 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
 
     const serverQuery = mentionServerQuery(debouncedQuery ?? '');
 
-    if (!serverQuery) {
+    if (!serverQuery || (debouncedQuery ?? '').includes(' ')) {
       setDirectories([]);
       return;
     }
@@ -538,7 +542,7 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
         style={mobileMaxHeight !== undefined ? { ...style, maxHeight: mobileMaxHeight } : style}
       >
         <ScrollableOverlay ref={listRef} preventOverscroll outerClassName="flex-1 min-h-0" className="p-1">
-        {loading ? (
+        {loading && !sessionsOnly ? (
           <div className="flex items-center justify-center py-4">
             <Icon name="refresh" className="h-4 w-4 animate-spin text-muted-foreground" />
           </div>

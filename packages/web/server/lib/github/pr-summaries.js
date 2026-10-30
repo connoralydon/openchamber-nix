@@ -29,6 +29,8 @@ const SUMMARY_FIELDS = `
   mergeStateStatus
   headRefOid
   baseRefName
+  comments { totalCount }
+  reviews { totalCount }
   commits(last: 1) {
     nodes {
       commit {
@@ -54,6 +56,13 @@ const SUMMARY_FIELDS = `
       }
     }
   }
+`;
+
+// Who wrote last, asked only for a pull request an agent is woken about
+// (`../pr-watch`): the sidebar never shows it.
+const ACTIVITY_FIELDS = `
+  recentComments: comments(last: 10) { nodes { createdAt author { __typename login } } }
+  recentReviews: reviews(last: 10) { nodes { submittedAt author { __typename login } } }
 `;
 
 const ISSUE_FIELDS = `
@@ -116,6 +125,13 @@ export const checkContextSchema = z.discriminatedUnion('__typename', [
   }),
 ]);
 
+const activityNodesSchema = (timeField) => z.object({
+  nodes: z.array(z.object({
+    [timeField]: z.string().nullable(),
+    author: z.object({ __typename: z.string(), login: z.string() }).nullable(),
+  }).nullable()),
+}).nullish();
+
 const prNodeSchema = z.object({
   number: z.number().int(),
   title: z.string(),
@@ -125,6 +141,10 @@ const prNodeSchema = z.object({
   mergeStateStatus: z.string().nullable(),
   headRefOid: z.string(),
   baseRefName: z.string(),
+  comments: z.object({ totalCount: z.number().int() }).nullish(),
+  reviews: z.object({ totalCount: z.number().int() }).nullish(),
+  recentComments: activityNodesSchema('createdAt'),
+  recentReviews: activityNodesSchema('submittedAt'),
   commits: z.object({
     nodes: z.array(z.object({
       commit: z.object({
@@ -142,6 +162,13 @@ const prNodeSchema = z.object({
  * latest run per app and name, win over classic commit statuses.
  */
 export function summarizeCheckContexts(contexts) {
+  const { checkRuns, statuses } = splitCheckContexts(contexts);
+  return checkRuns.length > 0
+    ? summarizeCheckRuns(dedupeCheckRuns(checkRuns))
+    : summarizeCombinedStatuses(statuses);
+}
+
+function splitCheckContexts(contexts) {
   const checkRuns = [];
   const statuses = [];
   for (const context of contexts) {
@@ -155,12 +182,38 @@ export function summarizeCheckContexts(contexts) {
         started_at: context.startedAt ?? undefined,
       });
     } else {
-      statuses.push({ state: context.state.toLowerCase() });
+      statuses.push({ name: context.context, state: context.state.toLowerCase() });
     }
   }
-  return checkRuns.length > 0
-    ? summarizeCheckRuns(dedupeCheckRuns(checkRuns))
-    : summarizeCombinedStatuses(statuses);
+  return { checkRuns, statuses };
+}
+
+const PASSING_CONCLUSIONS = new Set(['success', 'neutral', 'skipped']);
+
+/** The names of the checks `summarizeCheckContexts` counts as failed, in the same terms. */
+function failedCheckNames(contexts) {
+  const { checkRuns, statuses } = splitCheckContexts(contexts);
+  if (checkRuns.length > 0) {
+    return dedupeCheckRuns(checkRuns)
+      .filter((run) => run.status !== 'in_progress' && run.status !== 'queued' && run.conclusion && !PASSING_CONCLUSIONS.has(run.conclusion))
+      .map((run) => run.name);
+  }
+  return statuses.filter((status) => status.state === 'failure' || status.state === 'error').map((status) => status.name);
+}
+
+/** Comments and reviews, newest first, as `{ author, at }`; a bot reads as GitHub shows it. */
+function recentActivityOf(node) {
+  const entries = [
+    ...(node.recentComments?.nodes ?? []).map((entry) => entry && { author: entry.author, at: entry.createdAt }),
+    ...(node.recentReviews?.nodes ?? []).map((entry) => entry && { author: entry.author, at: entry.submittedAt }),
+  ];
+  return entries
+    .filter((entry) => entry?.author && entry.at)
+    .map((entry) => ({
+      author: entry.author.__typename === 'Bot' ? `${entry.author.login}[bot]` : entry.author.login,
+      at: entry.at,
+    }))
+    .sort((left, right) => (left.at < right.at ? 1 : left.at > right.at ? -1 : 0));
 }
 
 const issueNodeSchema = z.object({
@@ -231,14 +284,15 @@ const toMergeable = (mergeable) => {
   return null;
 };
 
-function toSummary(ref, value) {
+function toSummary(ref, value, details) {
   const parsed = prNodeSchema.safeParse(value);
   if (!parsed.success || parsed.data.number !== ref.number) {
     return null;
   }
   const node = parsed.data;
   const state = PR_STATES[node.state];
-  return {
+  const contexts = node.commits.nodes[0]?.commit.statusCheckRollup?.contexts.nodes ?? [];
+  const summary = {
     owner: ref.owner,
     repo: ref.repo,
     number: ref.number,
@@ -253,13 +307,20 @@ function toSummary(ref, value) {
     mergeableState: node.mergeStateStatus ? node.mergeStateStatus.toLowerCase() : null,
     // A closed/merged PR's checks are not actionable; the REST status route
     // drops them too.
-    checks: state === 'open'
-      ? summarizeCheckContexts(node.commits.nodes[0]?.commit.statusCheckRollup?.contexts.nodes ?? [])
-      : null,
+    checks: state === 'open' ? summarizeCheckContexts(contexts) : null,
   };
+  // Conversation comments plus reviews: it grows when someone writes on the
+  // pull request (a reply in a review thread is a review of its own), so an
+  // agent waiting on it hears about it (`../pr-watch`).
+  if (node.comments && node.reviews) summary.activity = node.comments.totalCount + node.reviews.totalCount;
+  if (details) {
+    summary.failedChecks = state === 'open' ? failedCheckNames(contexts) : [];
+    summary.recentActivity = recentActivityOf(node);
+  }
+  return summary;
 }
 
-function buildSummaryQuery(entries) {
+function buildSummaryQuery(entries, details) {
   const variables = {};
   const declarations = [];
   const selections = [];
@@ -277,7 +338,7 @@ function buildSummaryQuery(entries) {
   });
   // A fragment the document does not use is an error, so each is sent only with its kind.
   const fragments = [
-    entries.some((entry) => entry.kind === 'pull') ? `fragment PrSummary on PullRequest {${SUMMARY_FIELDS}}` : '',
+    entries.some((entry) => entry.kind === 'pull') ? `fragment PrSummary on PullRequest {${SUMMARY_FIELDS}${details ? ACTIVITY_FIELDS : ''}}` : '',
     entries.some((entry) => entry.kind === 'issue') ? `fragment IssueSummary on Issue {${ISSUE_FIELDS}}` : '',
     entries.some((entry) => entry.kind === 'discussion') ? `fragment DiscussionSummary on Discussion {${DISCUSSION_FIELDS}}` : '',
   ].filter(Boolean);
@@ -293,8 +354,8 @@ export const isGraphqlRateLimitError = (error) => Array.isArray(error?.errors)
 // GitHub answers a PR it cannot resolve (deleted, no access) with a per-alias
 // error next to the data for every other alias. Octokit throws on any error,
 // so keep the partial data and only rethrow when there is none.
-async function runSummaryQuery(octokit, entries) {
-  const { query, variables } = buildSummaryQuery(entries);
+async function runSummaryQuery(octokit, entries, details) {
+  const { query, variables } = buildSummaryQuery(entries, details);
   try {
     return await octokit.graphql(query, variables);
   } catch (error) {
@@ -308,9 +369,10 @@ async function runSummaryQuery(octokit, entries) {
 /**
  * Fetch live summaries for known PRs, issues and discussions. One GitHub
  * could not resolve is left out of the result: absence means "unknown",
- * never "closed".
+ * never "closed". `details` adds each open pull request's failed check names
+ * (`failedChecks`) and its newest comments and reviews (`recentActivity`).
  */
-export async function fetchPrSummaries({ octokit, refs, issueRefs = [], discussionRefs = [] }) {
+export async function fetchPrSummaries({ octokit, refs, issueRefs = [], discussionRefs = [], details = false }) {
   const entries = [
     ...refs.map((ref) => ({ kind: 'pull', ref })),
     ...issueRefs.map((ref) => ({ kind: 'issue', ref })),
@@ -323,7 +385,7 @@ export async function fetchPrSummaries({ octokit, refs, issueRefs = [], discussi
   // concurrent GraphQL documents more than a short sequence.
   for (let start = 0; start < entries.length; start += SUMMARY_ALIASES_PER_QUERY) {
     const chunk = entries.slice(start, start + SUMMARY_ALIASES_PER_QUERY);
-    const data = await runSummaryQuery(octokit, chunk);
+    const data = await runSummaryQuery(octokit, chunk, details);
     chunk.forEach(({ kind, ref }, index) => {
       const repository = data?.[`a${index}`];
       if (kind === 'issue') {
@@ -336,7 +398,7 @@ export async function fetchPrSummaries({ octokit, refs, issueRefs = [], discussi
         if (summary) discussionSummaries.push(summary);
         return;
       }
-      const summary = toSummary(ref, repository?.pullRequest);
+      const summary = toSummary(ref, repository?.pullRequest, details);
       if (summary) summaries.push(summary);
     });
   }

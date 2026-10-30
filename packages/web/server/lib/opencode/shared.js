@@ -420,6 +420,9 @@ function getConfigForPath(layers, targetPath) {
   if (layers.paths.projectPath && targetPath === layers.paths.projectPath) {
     return layers.projectConfig;
   }
+  if (layers.paths.userOverridePath && targetPath === layers.paths.userOverridePath) {
+    return layers.userOverrideConfig;
+  }
   return layers.userConfig;
 }
 

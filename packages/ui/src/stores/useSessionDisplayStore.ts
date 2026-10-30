@@ -51,6 +51,11 @@ type SessionDisplayStore = {
    * full-width rows have the room.
    */
   detailedZoneRows: boolean;
+  /**
+   * Worktrees named by their branch (a space by its own name) rather than by
+   * their task; the other name goes under it. Off by default.
+   */
+  worktreeNameByBranch: boolean;
   // VS Code only: the compact webview keeps archived buckets inline because it
   // has no room for the full Archive page. Web/desktop ignore this flag and
   // always route archived sessions to the Archive page instead.
@@ -60,6 +65,7 @@ type SessionDisplayStore = {
   setShowWorkSection: (show: boolean) => void;
   setShowPinnedSection: (show: boolean) => void;
   setDetailedZoneRows: (detailed: boolean) => void;
+  setWorktreeNameByBranch: (byBranch: boolean) => void;
   setShowArchivedSessions: (show: boolean) => void;
   toggleArchivedSessions: () => void;
   setProjectSortOrder: (order: ProjectSortOrder) => void;
@@ -150,6 +156,7 @@ export const useSessionDisplayStore = create<SessionDisplayStore>()(
       // state keeps an earlier choice.
       showPinnedSection: true,
       detailedZoneRows: getSettingsSurface() === 'mobile',
+      worktreeNameByBranch: false,
       // Default to HIDDEN so the pre-hydration state matches the quiet/safe
       // option: archived sessions must never flash visible on startup and then
       // disappear once the persisted preference rehydrates.
@@ -159,6 +166,7 @@ export const useSessionDisplayStore = create<SessionDisplayStore>()(
       setShowWorkSection: (show) => set({ showWorkSection: show }),
       setShowPinnedSection: (show) => set({ showPinnedSection: show }),
       setDetailedZoneRows: (detailed) => set({ detailedZoneRows: detailed }),
+      setWorktreeNameByBranch: (byBranch) => set({ worktreeNameByBranch: byBranch }),
       setShowArchivedSessions: (show) => set({ showArchivedSessions: show }),
       toggleArchivedSessions: () => set((state) => ({ showArchivedSessions: !state.showArchivedSessions })),
       setProjectSortOrder: (order) => set({ projectSortOrder: order }),

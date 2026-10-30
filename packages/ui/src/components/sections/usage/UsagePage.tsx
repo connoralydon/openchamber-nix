@@ -2,6 +2,7 @@ import React from 'react';
 import { UsageCard } from './UsageCard';
 import { QuotaCredentials } from './QuotaCredentials';
 import { ClaudeCodeSignIn } from './ClaudeCodeSignIn';
+import { ConsoleBudgetsSection } from './ConsoleBudgetsSection';
 import { QUOTA_PROVIDERS } from '@/lib/quota';
 import { useQuotaAutoRefresh, useQuotaStore } from '@/stores/useQuotaStore';
 import { updateDesktopSettings } from '@/lib/persistence';
@@ -86,7 +87,8 @@ export const UsagePage: React.FC = () => {
     ? usage
       ? t('header.services.usageRefreshFailedStale', { error: refreshError })
       : refreshError
-    : selectedResult?.configured && !selectedResult.ok
+    // OpenCode Go reports a failed Go read beside the Console budgets it still has.
+    : selectedResult?.configured && selectedResult.error
       ? selectedResult.error
       : null;
   const showInDropdown = selectedProviderId ? dropdownProviderIds.includes(selectedProviderId) : false;
@@ -247,6 +249,8 @@ export const UsagePage: React.FC = () => {
         </SettingsSection>
       )}
 
+      {usage?.consoleBudgets && <ConsoleBudgetsSection consoleBudgets={usage.consoleBudgets} />}
+
       {providerModels.length > 0 && (
         <SettingsSection
           title={t('settings.usage.page.section.modelQuotas')}
@@ -359,7 +363,7 @@ export const UsagePage: React.FC = () => {
       )}
 
       {selectedResult?.configured && usage && Object.keys(usage.windows ?? {}).length === 0 &&
-        providerModels.length === 0 && (
+        providerModels.length === 0 && !usage.consoleBudgets && (
         <div className="pb-8">
           <p className="typography-ui-label text-foreground">{t('settings.usage.page.state.noQuotaWindowsTitle')}</p>
           <p className="typography-meta text-muted-foreground mt-1">{t('settings.usage.page.state.noQuotaWindowsDescription')}</p>

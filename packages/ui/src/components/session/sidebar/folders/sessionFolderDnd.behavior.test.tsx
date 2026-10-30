@@ -19,6 +19,8 @@ mock.module('@dnd-kit/core', () => ({
   MouseSensor: class {},
   TouchSensor: class {},
   closestCenter: () => null,
+  pointerWithin: () => [],
+  rectIntersection: () => [],
   useSensor: () => null,
   useSensors: () => [],
   useDraggable: () => ({ attributes: {}, listeners: {}, setNodeRef: () => undefined, isDragging: false }),

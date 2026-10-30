@@ -141,6 +141,9 @@ function liveMergeRequestSummary(ref, raw) {
   };
   if (text(raw.sha)) summary.headSha = raw.sha;
   if (text(raw.target_branch)) summary.base = raw.target_branch;
+  // Notes people wrote, system notes left out: an agent waiting on the merge
+  // request hears about a new one (`../pr-watch`).
+  if (Number.isInteger(raw.user_notes_count)) summary.activity = raw.user_notes_count;
   return summary;
 }
 
@@ -378,6 +381,30 @@ export function createGitLabResourceService({ origin, client, download, resolveP
     } catch {
       return null;
     }
+  };
+
+  /**
+   * What an agent woken about a merge request reads first: the failed jobs
+   * of its head pipeline and its newest notes people wrote, newest first. A
+   * part GitLab does not answer is empty, the wake goes out without it.
+   */
+  const mergeRequestDetails = async (path, raw) => {
+    const pipeline = raw?.head_pipeline;
+    const [jobs, notes] = await Promise.all([
+      raw?.state === 'opened' && Number.isInteger(pipeline?.id) && pipeline.status === 'failed'
+        ? client.Jobs.all(Number.isInteger(pipeline.project_id) ? pipeline.project_id : path, {
+          pipelineId: pipeline.id, scope: 'failed', maxPages: 1, perPage: 100,
+        }).catch(() => [])
+        : [],
+      client.MergeRequestNotes.all(path, raw?.iid, { sort: 'desc', orderBy: 'created_at', maxPages: 1, perPage: 30 }).catch(() => []),
+    ]);
+    return {
+      failedChecks: asArray(jobs).flatMap((job) => (text(job?.name) ? [job.name] : [])),
+      recentActivity: asArray(notes)
+        .filter((note) => note?.system !== true && text(note?.author?.username) && text(note?.created_at))
+        .slice(0, 10)
+        .map((note) => ({ author: note.author.username, at: note.created_at })),
+    };
   };
 
   const findByNumber = async (directory, number, selector, options = {}) => {
@@ -1182,9 +1209,11 @@ export function createGitLabResourceService({ origin, client, download, resolveP
      * Live state of merge requests and issues already known by project path
      * and number, for the sidebar and the session's linked items. An item
      * GitLab cannot answer is left out, unknown rather than closed; a refused
-     * token fails the whole read so the account is reconciled.
+     * token fails the whole read so the account is reconciled. `details`
+     * adds an open merge request's failed job names and newest notes, two
+     * more calls each, so only a merge request an agent is woken about asks.
      */
-    async liveSummaries({ refs = [], issueRefs = [] }) {
+    async liveSummaries({ refs = [], issueRefs = [], details = false }) {
       const read = async (ref, load, map) => {
         try {
           return map(ref, await load(`${ref.owner}/${ref.repo}`, ref.number));
@@ -1193,8 +1222,17 @@ export function createGitLabResourceService({ origin, client, download, resolveP
           return null;
         }
       };
+      const loadMergeRequest = async (path, number) => {
+        const raw = await client.MergeRequests.show(path, number);
+        return details ? { raw, ...(await mergeRequestDetails(path, raw)) } : { raw };
+      };
+      const mapMergeRequest = (ref, { raw, failedChecks, recentActivity }) => {
+        const summary = liveMergeRequestSummary(ref, raw);
+        if (summary && details) Object.assign(summary, { failedChecks, recentActivity });
+        return summary;
+      };
       const [summaries, issueSummaries] = await Promise.all([
-        mapLimited(refs, LIVE_SUMMARY_CONCURRENCY, (ref) => read(ref, (path, number) => client.MergeRequests.show(path, number), liveMergeRequestSummary)),
+        mapLimited(refs, LIVE_SUMMARY_CONCURRENCY, (ref) => read(ref, loadMergeRequest, mapMergeRequest)),
         mapLimited(issueRefs, LIVE_SUMMARY_CONCURRENCY, (ref) => read(ref, (path, number) => client.Issues.show(number, { projectId: path }), liveIssueSummary)),
       ]);
       return { summaries: summaries.filter(Boolean), issueSummaries: issueSummaries.filter(Boolean) };

@@ -91,18 +91,26 @@
   }
 }
 
-/* A PR or issue reference coloured by its state (--oc-ref-tint). It is side
-   context, so it rests a little blended into the muted text, its state still
-   plain to read, and takes its full colour on hover or focus, its own or that
-   of an enclosing .oc-ref-tint-scope row. */
+/* A PR or issue mark coloured by its state (--oc-ref-tint). The mark alone
+   carries the state, its number stays neutral, so the colour shows at full
+   strength: blended into the muted text a 12px glyph read as grey. */
 @utility oc-ref-tint {
-  color: color-mix(in oklab, var(--oc-ref-tint) 75%, var(--muted-foreground));
+  color: var(--oc-ref-tint);
+}
 
-  &:hover,
-  &:focus-visible,
-  :where(.oc-ref-tint-scope:hover, .oc-ref-tint-scope:focus-within) & {
-    color: var(--oc-ref-tint);
-  }
+/* A list row's title at rest: halfway between body and muted text, so it stays
+   a step above the row's metadata (muted) and below a title that needs the
+   user (full strength). An opacity of the body colour would not do: light
+   themes keep body text soft, and at 80% it lands on or under the muted
+   colour. */
+@utility oc-title-rest {
+  color: color-mix(in oklab, var(--foreground) 50%, var(--muted-foreground));
+}
+
+/* A container's label (a worktree, folder or space in a list): a step above
+   the titles at rest inside it and below the full-strength header above it. */
+@utility oc-group-label {
+  color: color-mix(in oklab, var(--foreground) 75%, var(--muted-foreground));
 }
 
 /* Buttons should never look selectable. */
@@ -1173,13 +1181,14 @@ diffs-container {
 /* Git panel header: gives up room in steps while its row does not fit, as
    measured by useToolbarFit in GitHeader. The repository picker shrinks
    first; the branch picker keeps its width until that is not enough. Then
-   the sync button drops its word, keeping its icon, counts and tooltip; the
-   counts go last. */
+   the sync button and an isolated space's Apply drop their words, keeping
+   their icons and names for the pointer; the counts go last. */
 [data-git-header-branch-shrinks] .branch-selector__trigger {
   flex-shrink: 1;
 }
 
 [data-git-header-compact] .sync-actions__label,
+[data-git-header-compact] .space-apply__label,
 [data-git-header-tight] .sync-actions__text {
   display: none;
 }
@@ -1649,7 +1658,9 @@ diffs-container {
 /* Inline code sits inside a sentence: the theme's code colour over its own
    quiet chip. The colour keeps the theme's value with a touch of transparency,
    and the chip fades into the background further, so neither shouts like the
-   original full-strength style. */
+   original full-strength style. Many themes paint the chip almost the canvas
+   colour, so a faint wash of the text colour on top keeps it visible as a
+   chip in every theme. */
 .markdown-content code[data-streamdown="inline-code"] {
   background-color: var(--markdown-inline-code-bg, var(--surface-subtle)) !important;
   color: var(--markdown-inline-code, var(--foreground)) !important;
@@ -1662,6 +1673,7 @@ diffs-container {
 @supports (color: color-mix(in lab, red, red)) {
   .markdown-content code[data-streamdown="inline-code"] {
     background-color: color-mix(in srgb, var(--markdown-inline-code-bg, var(--surface-subtle)) 50%, transparent) !important;
+    background-image: linear-gradient(color-mix(in srgb, var(--foreground) 4%, transparent), color-mix(in srgb, var(--foreground) 4%, transparent));
     color: color-mix(in srgb, var(--markdown-inline-code, var(--foreground)) 90%, transparent) !important;
   }
 }
@@ -2159,25 +2171,6 @@ diffs-container {
   min-width: 0;
 }
 
-/* Like code-block actions: hidden until hover only where a pointer can
-   hover; on touch screens the zoom controls stay visible. */
-[data-streamdown="mermaid-block"] [data-streamdown="mermaid-toolbar"] {
-  transition: opacity 0.15s ease;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  [data-streamdown="mermaid-block"] [data-streamdown="mermaid-toolbar"] {
-    opacity: 0;
-    pointer-events: none;
-  }
-
-  [data-streamdown="mermaid-block"]:hover [data-streamdown="mermaid-toolbar"],
-  [data-streamdown="mermaid-block"]:focus-within [data-streamdown="mermaid-toolbar"] {
-    opacity: 1;
-    pointer-events: auto;
-  }
-}
-
 [data-streamdown="mermaid-block"][data-mermaid-render="svg"] [data-streamdown="mermaid-scroll"] {
   overflow: hidden;
 }
@@ -2246,10 +2239,18 @@ diffs-container {
   min-height: 0;
 }
 
+/* The controls row stays above the diagram; the diagram takes the rest. */
+.markdown-mermaid-fullscreen [data-streamdown="mermaid-frame"] {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
 .markdown-mermaid-fullscreen [data-streamdown="mermaid-block"] {
   width: 100%;
-  height: 100%;
-  min-height: 100%;
+  flex: 1 1 0;
+  min-height: 0;
   padding: 0.75rem;
   border: 0;
   border-radius: 0;

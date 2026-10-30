@@ -177,6 +177,36 @@ describe('fetchPrSummaries', () => {
     expect(queries[0]).not.toContain('fragment IssueSummary');
   });
 
+  test('details name the failed checks and the newest writers, and only details ask for them', async () => {
+    const node = prNode(7, {
+      commits: { nodes: [{ commit: { statusCheckRollup: { contexts: { nodes: [
+        checkRun('lint', 'COMPLETED', 'FAILURE', '2026-09-30T10:00:00Z'),
+        checkRun('tests', 'COMPLETED', 'FAILURE', '2026-09-30T10:00:00Z'),
+        checkRun('tests', 'COMPLETED', 'SUCCESS', '2026-09-30T10:05:00Z'),
+        checkRun('build', 'IN_PROGRESS', null, '2026-09-30T10:05:00Z'),
+      ] } } } }] },
+      recentComments: { nodes: [{ createdAt: '2026-09-30T10:01:00Z', author: { __typename: 'User', login: 'alice' } }, null] },
+      recentReviews: { nodes: [{ submittedAt: '2026-09-30T10:02:00Z', author: { __typename: 'Bot', login: 'coderabbitai' } }, { submittedAt: '2026-09-30T10:03:00Z', author: null }] },
+    });
+    const octokit = fakeOctokit(new Map([[7, node]]));
+    const queries = [];
+    const graphql = octokit.graphql;
+    octokit.graphql = async (query, variables) => { queries.push(query); return graphql(query, variables); };
+    const ref = { owner: 'acme', repo: 'app', number: 7 };
+
+    const { summaries: [plain] } = await fetchPrSummaries({ octokit, refs: [ref] });
+    const { summaries: [detailed] } = await fetchPrSummaries({ octokit, refs: [ref], details: true });
+
+    expect(queries[0]).not.toContain('recentComments');
+    expect(plain).not.toHaveProperty('failedChecks');
+    expect(queries[1]).toContain('recentComments');
+    expect(detailed.failedChecks).toEqual(['lint']);
+    expect(detailed.recentActivity).toEqual([
+      { author: 'coderabbitai[bot]', at: '2026-09-30T10:02:00Z' },
+      { author: 'alice', at: '2026-09-30T10:01:00Z' },
+    ]);
+  });
+
   test('packs 25 PRs per GraphQL document', async () => {
     const refs = Array.from({ length: 26 }, (_, index) => ({ owner: 'acme', repo: 'app', number: index + 1 }));
     const octokit = fakeOctokit(new Map(refs.map((ref) => [ref.number, prNode(ref.number)])));

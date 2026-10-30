@@ -107,6 +107,16 @@ folder with only models, agents or skills opens without a prompt, and editing
 those never asks again. A configuration file that does not parse counts as
 code, since OpenCode may still read what this parser rejects.
 
+### Why a plugin's hash covers the local files it imports
+
+A trusted plugin that imports `../../scripts/helper.js` runs whatever that
+file holds, so a pull request could change the helper and keep the plugin's
+own hash. The local files a plugin's scripts import, and the files those
+import, are hashed into the plugin's hash, along with every local import that
+names no file yet. A plugin that imports nothing local keeps the hash of its
+own content, so answers given before imports were followed still hold.
+Package imports are left out: `node_modules` is installed, not committed.
+
 ### Why the walk stops below home
 
 Levels from the user's home up hold the user's own setup and OpenCode's global
@@ -128,8 +138,9 @@ it keeps its own middleware.
 - A folder OpenCode already runs reloads its plugins when they change on disk.
   The gate decides when a location starts; switching a running folder to a
   branch with different plugins loads them as the OpenCode CLI would.
-- A trusted plugin that imports other files from the repository is
-  fingerprinted by its own files only. A change to the imported file does not
-  ask again.
+- A plugin's imports are followed when they name a file by a literal relative
+  or absolute path. Package imports, `tsconfig` path aliases, computed import
+  specifiers and files a plugin reads and evaluates itself are not, so a
+  change behind one of them does not ask again.
 - A plugin folder past 500 files or 16 MB is hashed by path and size beyond
-  that budget.
+  that budget, and its imports are followed within a budget of the same size.

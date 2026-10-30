@@ -141,15 +141,18 @@ const FileHeader = ({ path, commentOrigin }: { path: string; commentOrigin?: Dif
   const wholeFileComment = useWholeFileComment({ fileLabel: path, origin: commentOrigin });
   return (
     <>
-      <div className="sticky top-0 z-10 flex items-center gap-1.5 border-b border-[var(--interactive-border)]/35 bg-[var(--surface-elevated)]/90 px-4 py-1.5 backdrop-blur-md supports-[backdrop-filter]:bg-[var(--surface-elevated)]/80">
-        <FileTypeIcon filePath={path} className="size-3.5 shrink-0" />
-        <ChangedPathLabel path={path} className="typography-meta min-w-0 flex-1 font-mono" />
-        <WholeFileCommentButton
-          onClick={wholeFileComment.toggle}
-          active={wholeFileComment.isOpen}
-        />
+      <div className="sticky top-0 z-10 border-b border-[var(--interactive-border)]/35 bg-[var(--surface-elevated)]/90 backdrop-blur-md supports-[backdrop-filter]:bg-[var(--surface-elevated)]/80">
+        <div className="flex items-center gap-1.5 px-4 py-1.5">
+          <FileTypeIcon filePath={path} className="size-3.5 shrink-0" />
+          <ChangedPathLabel path={path} className="typography-meta min-w-0 flex-1 font-mono" />
+          <WholeFileCommentButton
+            onClick={wholeFileComment.toggle}
+            active={wholeFileComment.isOpen}
+          />
+        </div>
+        {wholeFileComment.editor}
       </div>
-      {wholeFileComment.body}
+      {wholeFileComment.cards}
     </>
   );
 };

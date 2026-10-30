@@ -687,7 +687,7 @@ const RelatedTrackerItem: React.FC<{
             type="button"
             onClick={() => onOpen(issue)}
             title={issue.title}
-            className={cn(className, 'rounded-sm text-muted-foreground/80 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring')}
+            className={cn(className, 'rounded-sm text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring')}
         >
             {content}
         </button>

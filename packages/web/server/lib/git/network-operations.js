@@ -895,6 +895,26 @@ export function createNetworkOperations({
     throw operationError(transportFailureCode(detail), detail, 500, result);
   };
 
+  // The remote's default branch is never deleted, whatever asked for it: some
+  // hosts refuse that deletion and some carry it out. The remote itself says
+  // which branch its HEAD names; local `refs/remotes/<remote>/HEAD` can be
+  // missing or stale. The question gets its own transport, released before the
+  // push gets one: a managed HTTPS lease answers a single credential request,
+  // as between sync's fetch and push.
+  const refuseRemoteDefaultBranch = async (plan, controls, deadline) => {
+    const probe = await transport(plan, controls, deadline);
+    let output;
+    try {
+      output = await commandResult(plan, controls, ['ls-remote', '--symref', '--', plan.rawEndpoint, 'HEAD'], probe, deadline);
+    } finally {
+      if (await safeRevoke(probe, plan.operationId)) throw operationError('UNKNOWN', 'Git credential cleanup failed', 500);
+    }
+    const defaultRef = /^ref: (\S+)\tHEAD$/m.exec(String(output.stdout))?.[1];
+    if (defaultRef === plan.target.destinationRef) {
+      throw operationError('INVALID_REQUEST', "The remote's default branch can't be deleted", 409);
+    }
+  };
+
   const localIntegrationContext = async (directory, controls, deadline) => {
     const env = {
       ...await managedGitEnvironment(),
@@ -1639,6 +1659,7 @@ export function createNetworkOperations({
       if (controls.isCancellationRequested()) result = cancellationResult(plan, controls, {});
       else {
         lfsUploaded = await prepareLfsPublication(plan, controls, deadline);
+        if (plan.target.operation === 'delete-remote-branch') await refuseRemoteDefaultBranch(plan, controls, deadline);
         context = await transport(plan, controls, deadline);
         if (plan.transportMode === 'managed') await controls.markStepCompleted('authenticated');
         await revalidate(plan, controls, deadline);

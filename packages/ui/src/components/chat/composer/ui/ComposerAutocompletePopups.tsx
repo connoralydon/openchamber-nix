@@ -63,10 +63,15 @@ interface ComposerAutocompletePopupsProps {
     onCommandSelect: (command: CommandInfo) => void;
     onSkillSelect: (skillName: string) => void;
     onSnippetSelect: (snippet: unknown, trigger: string) => void;
+    /** The draft without the `#name` being typed, offered to save as that snippet. */
+    snippetDraftText?: string;
+    onSnippetDraftSaved?: (name: string) => void;
     onFileSelect: (file: { name: string; path: string; relativePath?: string }) => void;
     onAgentSelect: (agentName: string) => void;
     /** Mentions another session; absent where the composer cannot attach one. */
     onSessionSelect?: (session: Session) => void;
+    /** The session this composer writes to, which `@` never offers. */
+    currentSessionId: string | null;
     onEmojiSelect: (emoji: string) => void;
     onClose: () => void;
 }
@@ -119,6 +124,8 @@ function AutocompletePopup(props: ComposerAutocompletePopupsProps & { open: Auto
                     ref={props.snippetRef}
                     searchQuery={query}
                     onSnippetSelect={props.onSnippetSelect}
+                    draftText={props.snippetDraftText}
+                    onDraftSaved={props.onSnippetDraftSaved}
                     onClose={onClose}
                     style={style}
                 />
@@ -131,6 +138,7 @@ function AutocompletePopup(props: ComposerAutocompletePopupsProps & { open: Auto
                     onFileSelect={props.onFileSelect}
                     onAgentSelect={props.onAgentSelect}
                     onSessionSelect={props.onSessionSelect}
+                    currentSessionId={props.currentSessionId}
                     onClose={onClose}
                     style={style}
                 />

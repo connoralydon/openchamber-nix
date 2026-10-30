@@ -245,6 +245,10 @@ describe("what a session row says keeps its turn open", () => {
     expect(resolveSessionTurnActivity("subagent", false, true)).toBe("subagent")
     expect(resolveSessionTurnActivity(null, false, true)).toBe("shell")
     expect(resolveSessionTurnActivity(null, false, false)).toBeNull()
+    // An agent waiting on its pull request reads as working, after anything that really runs.
+    expect(resolveSessionTurnActivity(null, false, false, true)).toBe("pullRequest")
+    expect(resolveSessionTurnActivity(null, false, true, true)).toBe("shell")
+    expect(resolveSessionTurnActivity("running", false, false, true)).toBe("running")
   })
 })
 

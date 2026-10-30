@@ -273,4 +273,14 @@ describe('VS Code git remote arguments with option-like names', () => {
     expect(deleted.success).toBe(true);
     expect(runGit(remote, ['branch', '--list', 'feature/option-like-push']).trim()).toBe('');
   }, 30_000);
+
+  it("refuses to delete the branch the remote's HEAD names", async () => {
+    if (!canRunGit()) return;
+
+    const { remote, repository } = createRepositoryWithRemote();
+    runGit(remote, ['config', 'receive.denyDeleteCurrent', 'ignore']);
+
+    await expect(deleteRemoteBranch(repository, 'main', 'origin')).rejects.toThrow("The remote's default branch can't be deleted");
+    expect(runGit(remote, ['branch', '--list', 'main']).trim()).toContain('main');
+  }, 30_000);
 });

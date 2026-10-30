@@ -66,6 +66,12 @@ the user can want independently:
   `session.prompt` hook: a prompt for the session, from any sender, aborts the
   waiting call, which returns `{ answered: false, reason: "chat" }`, and the
   agent reads the message next.
+- `openchamber_image` — `image.generate`, images made or edited by the image
+  model the user chose in Settings (`../openchamber-control/generate-image.js`).
+  Off by default: enabled only while `agentImageToolEnabled` is `true`, and
+  the control service refuses the action when it is not. Never behind Code
+  Mode, like render: the chat draws the images in place of the call's row from
+  its stored result, which an `execute` script would hide.
 - `openchamber_workflow` — `workflow.*`, scripts that fan a large task out to
   many agents, run by OpenChamber (`../workflows/DOCUMENTATION.md`). Only in
   builds with `OPENCHAMBER_WORKFLOWS_ENABLE`; there it is on unless

@@ -95,7 +95,7 @@ function OpenCodeStartupNote({ className }: { className?: string }) {
     return (
         <span
             role="status"
-            className={cn('min-w-0 truncate self-center typography-micro text-muted-foreground/70', className)}
+            className={cn('min-w-0 truncate self-center typography-micro text-muted-foreground', className)}
             title={t('chat.chatInput.waitingForOpenCodeHint')}
         >
             {t('chat.chatInput.waitingForOpenCode')}

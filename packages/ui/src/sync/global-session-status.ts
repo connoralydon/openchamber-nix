@@ -15,6 +15,7 @@ import {
 import { countSyncPerformance } from './performance-diagnostics';
 import { hasRunningShell, useBackgroundShellsStore } from './background-shells';
 import { useWorkflowActivityStore } from './workflow-activity';
+import { usePrWatchStore } from './pr-watch';
 
 // Shared live busy/retry index for every directory. Global events update it
 // incrementally and authoritative directory snapshots reconcile it, so each
@@ -138,17 +139,24 @@ const hasBackgroundWork = (sessionId: string, activeSessionIds: ReadonlySet<stri
  * its events, see `workflow-activity.ts`), so it holds between phases when no
  * agent happens to be busy.
  */
-type SessionTurnActivity = 'running' | 'workflow' | 'subagent' | 'shell';
+type SessionTurnActivity = 'running' | 'workflow' | 'subagent' | 'shell' | 'pullRequest';
 
-/** The order above: the session's own run, a workflow, a subagent, a command. */
+/**
+ * The order above: the session's own run, a workflow, a subagent, a command,
+ * and last an agent that ended its turn to wait on its pull request
+ * (`pr-watch.ts`): the work is not done, the server wakes it.
+ */
 export const resolveSessionTurnActivity = (
   status: 'running' | 'subagent' | null,
   workflowRunning: boolean,
   waitingOnShell: boolean,
+  waitingOnPullRequest = false,
 ): SessionTurnActivity | null => {
   if (status === 'running') return status;
   if (workflowRunning) return 'workflow';
-  return status ?? (waitingOnShell ? 'shell' : null);
+  if (status) return status;
+  if (waitingOnShell) return 'shell';
+  return waitingOnPullRequest ? 'pullRequest' : null;
 };
 
 export const useSessionTurnActivity = (sessionId: string): SessionTurnActivity | null => {
@@ -158,7 +166,8 @@ export const useSessionTurnActivity = (sessionId: string): SessionTurnActivity |
   });
   const workflowRunning = useWorkflowActivityStore((state) => state.runningSessionIds.has(sessionId));
   const waitingOnShell = useBackgroundShellsStore((state) => state.sessionIds.has(sessionId));
-  return resolveSessionTurnActivity(status, workflowRunning, waitingOnShell);
+  const waitingOnPullRequest = usePrWatchStore((state) => state.bySession.has(sessionId));
+  return resolveSessionTurnActivity(status, workflowRunning, waitingOnShell, waitingOnPullRequest);
 };
 
 // The last background command of an idle session ending closes its turn,

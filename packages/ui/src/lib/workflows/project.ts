@@ -2,6 +2,7 @@ import React from 'react';
 
 import type { ProjectEntry } from '@/lib/api/types';
 import { normalizeProjectPath, resolveProjectForSessionDirectory } from '@/lib/projectResolution';
+import { isSpaceDirectory } from '@/lib/spaces/space-route';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import type { WorktreeMetadata } from '@/types/worktree';
@@ -14,7 +15,8 @@ export const resolveWorkflowProjectScope = (
 ): WorkflowProjectScope | null => {
   const own = normalizeProjectPath(directory);
   if (!own) return null;
-  const project = resolveProjectForSessionDirectory(projects, worktreesByProject, own);
+  // A space keeps its own scope: the host project's saved workflows and runs stay on the host.
+  const project = isSpaceDirectory(own) ? null : resolveProjectForSessionDirectory(projects, worktreesByProject, own);
   const root = normalizeProjectPath(project?.path ?? null);
   if (!root) return { directories: [own], savedDirectory: own };
   const worktrees = worktreesByProject.get(project?.path ?? '') ?? worktreesByProject.get(root) ?? [];

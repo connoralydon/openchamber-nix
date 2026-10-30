@@ -880,20 +880,34 @@ class OpencodeService {
 
   /**
    * Writes a heap snapshot of the OpenCode server process into OpenCode's log
-   * directory and returns its path on the OpenCode machine (OpenCode 2.1.4;
-   * older servers answer 404). OpenCode pauses while the heap serializes. The
-   * route takes no location, so it starts no MCP servers.
+   * directory and returns its path on the OpenCode machine. OpenCode pauses
+   * while the heap serializes. The route takes no location, so it starts no
+   * MCP servers.
    */
+  /**
+   * Asks OpenCode to report changes of one file under `directory` for 24 hours
+   * as `filesystem.changed` (experimental since 2.2). Watching it again resets
+   * the expiry. OpenCode keeps watches in memory, so a restart drops them.
+   */
+  async watchFile(directory: string, relativePath: string): Promise<void> {
+    await call("file.watch", () => this.clientFor(directory).file.watch({ path: relativePath }))
+  }
+
+  /**
+   * The models that generate images (`type: "image"`, OpenCode 2.2), for the
+   * image tool's picker; chat models are left out. `value` is `provider/model`.
+   */
+  async listImageModels(): Promise<Array<{ value: string; name: string; providerID: string }>> {
+    const models = await call("model.list", () => this.clientFor(this.currentDirectory).model.list({ types: ["image"] }).then((r) => r.data))
+    return models.map((model) => ({ value: `${model.providerID}/${model.modelID}`, name: model.name, providerID: model.providerID }))
+  }
+
   async writeHeapSnapshot(): Promise<{ path: string }> {
     const result = await call("debug.heapDump", () => this.client.debug.heapDump())
     return { path: result.path }
   }
 
-  /**
-   * The list is global, but v2 serves it through a location: asked without a
-   * directory, OpenCode starts its own working directory (MCP servers
-   * included) to answer. The current directory is already running.
-   */
+  /** Global since OpenCode 2.2: the read starts no location. */
   async listProjects(): Promise<Project[]> {
     const projects = await call("project.list", () => this.clientFor().project.list())
     return projects.map(projectProject)
@@ -1381,7 +1395,10 @@ class OpencodeService {
     files?: Array<FileInputLite>
     /**
      * Context items sent ahead of the prompt as synthetic messages. A caller
-     * that supplies `messageId` also supplies the item ids, minted before it.
+     * that supplies `messageId` also supplies the ids of the items the
+     * timeline shows, minted before it; an instruction it does not show (the
+     * response style) may come without an id and gets one here, after the
+     * prompt's, which keeps admission order by time all the same.
      */
     context?: SyntheticContextInput[]
     messageId?: string
@@ -1391,6 +1408,12 @@ class OpencodeService {
     directory?: string | null
     /** Skills named inline; attached to the prompt so OpenCode loads them with it. */
     skills?: SkillMentions
+    /**
+     * Runs right before the prompt request leaves, after the context ahead of
+     * it was admitted: from here on a later send to the session lands after
+     * this one.
+     */
+    beforeSend?: () => void
   }): Promise<string> {
     this.assertRuntimeUnchanged(params.runtimeKey)
 
@@ -1430,6 +1453,7 @@ class OpencodeService {
     }
     const prompt = (skills: readonly SkillAttachmentRef[]) => {
       this.assertRuntimeUnchanged(params.runtimeKey)
+      params.beforeSend?.()
       return call("session.prompt", () =>
         this.clientFor(params.directory).session.prompt({
           sessionID: params.id,
@@ -1494,6 +1518,8 @@ class OpencodeService {
     context?: SyntheticContextInput[]
     delivery?: SessionInboxDelivery
     directory?: string | null
+    /** As `sendMessage`'s: runs right before the command request leaves. */
+    beforeSend?: () => void
   }): Promise<void> {
     this.assertRuntimeUnchanged(params.runtimeKey)
     const files = await Promise.all((params.files ?? []).map((file) => this.toPromptFile(file)))
@@ -1514,6 +1540,7 @@ class OpencodeService {
       )
     }
     this.assertRuntimeUnchanged(params.runtimeKey)
+    params.beforeSend?.()
     await call("session.command", () =>
       this.clientFor(params.directory).session.command({
         sessionID: params.id,
@@ -1965,13 +1992,8 @@ class OpencodeService {
    * opencode.json defines exists on the host there and nowhere else, and a space can be granted
    * it; asked with no directory, its models had no provider to be picked under. While the space's
    * project is unknown they are asked with no directory. Models and the default come from the
-   * space as usual.
-   *
-   * Models are read before providers. Since OpenCode 2.0.27 the model routes wait for the
-   * directory's plugins to activate, and the provider route does not: asked together in a
-   * directory OpenCode has not started, providers answer empty beside a full model list. For a
-   * space the providers come from another location than the models, the host project, which may
-   * have stopped; its own model route is read beside the space's for the same wait.
+   * space as usual. Since OpenCode 2.2 the model and provider routes both wait for their
+   * directory's plugins, so a directory OpenCode has not started answers complete.
    *
    * `fresh`: a request already in flight started before the caller's reason to re-read (a
    * catalog event), so it may carry the old catalog. Wait it out and read again.
@@ -1992,14 +2014,11 @@ class OpencodeService {
     const request = (async () => {
       const client = this.clientFor(effectiveDirectory)
       const providerClient = isSpaceDirectory(effectiveDirectory) ? this.hostClientOfSpace(effectiveDirectory) : client
-      const [models, fallback] = await Promise.all([
+      const [models, fallback, providers] = await Promise.all([
         call("model.list", () => client.model.list().then((r) => r.data)),
         call("model.default", () => client.model.default().then((r) => r.data)).catch(() => undefined),
-        providerClient !== client && providerClient !== this.client
-          ? call("model.list", () => providerClient.model.list()).catch(() => undefined)
-          : undefined,
+        call("provider.list", () => providerClient.provider.list().then((r) => r.data)),
       ])
-      const providers = await call("provider.list", () => providerClient.provider.list().then((r) => r.data))
       return compact({
         providers,
         models: models.map((model) => (

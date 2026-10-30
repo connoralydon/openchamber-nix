@@ -380,10 +380,14 @@ describe("translateWireEvent", () => {
       { ...base, type: "session.inbox.delivery.changed", durable, data: { sessionID: "ses_1", inboxID: "in_1", delivery: "queue" } },
       { ...base, type: "tui.toast.show", data: { message: "x", variant: "info" } },
       { ...base, type: "integration.updated", data: {} },
-      { ...base, type: "filesystem.changed", data: { file: "/repo/a.ts", event: "change" } },
       { ...base, type: "worktree.updated", data: { projectID: "proj" } },
     ]
     for (const event of ignored) expect(translateWireEvent(event)).toEqual([])
+  })
+
+  test("a watched file's change names the file", () => {
+    expect(translateWireEvent({ ...base, type: "filesystem.changed", data: { file: "/repo/a.ts", event: "unlink" } }))
+      .toEqual([{ type: "filesystem.changed", properties: { file: "/repo/a.ts" } }])
   })
 })
 

@@ -90,6 +90,14 @@ OpenCode Go has two credential shapes and they are not interchangeable. An API k
 - **Expired API key**: Console keys carry an expiry and nothing renews them; the usage API answers an expired one with 401 and `error.code: 'api_key_expired'`. The message points to the "OpenCode Console account" row on the OpenCode card in Providers, because that sign-in serves Go and OpenCode renews it. When a Console sign-in exists and its own read failed before the key fallback, the Console error is shown instead, so the advice never asks for an account that is already connected. Any other 401 stays "authentication failed".
 - Keep `packages/web/server/lib/quota/providers/opencode-go.js` and `packages/vscode/src/opencodeGoQuota.ts` in sync — the VS Code extension duplicates this logic rather than importing the web provider.
 
+### OpenCode Console budgets
+
+The OpenCode Go result also carries the Console budgets of the same sign-in, the monthly spend limits a Console workspace sets on its member, as `usage.consoleBudgets` (`console-budgets.js`, shared with the VS Code extension host). They come from the running OpenCode (`GET /api/experimental/usage/limits`, OpenCode 2.2, read in the default directory through `../opencode/auth.js`), which resolves the active `opencode` sign-in itself and answers `null` without one, so an API key shows no budgets. The read runs beside the Go read and is best-effort: any failure drops the budgets, never the meters. When the Go read fails and budgets came back, the result still counts as a sample with the Go error kept, so a Console workspace without Go sees its budgets and the reason there are no meters.
+
+- **Only the usage page shows them.** They sit outside `usage.windows`, so the work status panel, which reads windows and models, never lists them.
+- **Order**: the budget with the least left comes first. `kind`, `sharing` and `perModel` carry what the Console names a budget by; the UI words them.
+- **Go meters stay ours.** The same route also reports the Go allowance, but only for a Console sign-in; the provider above also covers API keys and the credit balance, so it keeps reading the Console itself.
+
 On the first OpenCode Go usage refresh after upgrading, OpenChamber deletes the obsolete `quota/opencode-go.json` credential file without reading its cookie value.
 
 ## Codex credit balance semantics

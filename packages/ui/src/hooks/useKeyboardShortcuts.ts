@@ -48,6 +48,7 @@ import {
   invokeActiveSelectionAddToChat,
 } from '@/lib/addSelectionToChat';
 import { isIMECompositionEvent } from '@/lib/ime';
+import { getNextFavoriteModel } from '@/lib/modelRefs';
 import { canUseDigitShortcut, hasActiveBtwComposer, hasOpenDropdown, isEditableEventTarget, shouldStopDropdownImeEscape } from './keyboard-shortcut-dom';
 
 const dropdownTargetSelector = [
@@ -371,18 +372,16 @@ export const useKeyboardShortcuts = () => {
       || state.isHelpDialogOpen
       || state.isSessionSwitcherOpen
       || state.isAboutDialogOpen;
-    if (
-      state.isSettingsDialogOpen
-      || hasOverlay
-      || state.favoriteModels.length === 0
-    ) {
-      return false;
-    }
+    if (state.isSettingsDialogOpen || hasOverlay) return false;
     const config = useConfigStore.getState();
-    const index = state.favoriteModels.findIndex((model) => (
-      model.providerID === config.currentProviderId && model.modelID === config.currentModelId
-    ));
-    const next = state.favoriteModels[(index + delta + state.favoriteModels.length) % state.favoriteModels.length];
+    const next = getNextFavoriteModel(
+      state.favoriteModels,
+      config.providers,
+      state.hiddenModels,
+      { providerID: config.currentProviderId, modelID: config.currentModelId },
+      delta,
+    );
+    if (!next) return false;
     config.setProvider(next.providerID);
     config.setModel(next.modelID);
     state.addRecentModel(next.providerID, next.modelID);

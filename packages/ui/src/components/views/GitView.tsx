@@ -1,7 +1,6 @@
 import React from 'react';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useConfigStore } from '@/stores/useConfigStore';
-import { useFireworksCelebration } from '@/contexts/FireworksContext';
 import type { GitIdentityProfile, CommitFileEntry, GitStatus } from '@/lib/api/types';
 import { rankByQuery } from '@/lib/search/fuzzySearch';
 import { useGitIdentitiesStore } from '@/stores/useGitIdentitiesStore';
@@ -90,6 +89,7 @@ import { cn } from '@/lib/utils';
 import { generateCommitMessage as generateSessionCommitMessage, getGitWorktreeBootstrapStatus } from '@/lib/gitApi';
 import { sessionEvents } from '@/lib/sessionEvents';
 import { useI18n } from '@/lib/i18n';
+import { useCommitCelebration } from './git/useCommitCelebration';
 import { BoundGitNetworkOperationError, GitOperationResultError, runBoundGitNetworkOperation, runContributorAwarePush, describeGitSyncOutcome, type GitSyncOutcome } from '@/lib/boundGitNetworkOperation';
 import { useGitOperationRecovery } from './git/useGitOperationRecovery';
 import { GitOperationStatus } from './git/GitOperationStatus';
@@ -235,6 +235,10 @@ type GitViewProps = {
 };
 
 export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
+  // Counts openings of the panel, which stays mounted while closed: the clean
+  // state remounts on each one and picks a new line.
+  const [opening, setOpening] = React.useState({ active: isActive, count: 0 });
+  if (opening.active !== isActive) setOpening({ active: isActive, count: opening.count + (isActive ? 1 : 0) });
   const { t } = useI18n();
   const { git, sourceControl, runtime } = useRuntimeAPIs();
   // The panel's tabs belong to the open view's folder; the repository shown is the same folder,
@@ -693,7 +697,7 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
   const [commitAction, setCommitAction] = React.useState<CommitAction>(null);
   const [logMaxCountLocal, setLogMaxCountLocal] = React.useState<number>(25);
   const [isSettingIdentity, setIsSettingIdentity] = React.useState(false);
-  const { triggerFireworks } = useFireworksCelebration();
+  const commitCelebration = useCommitCelebration();
 
   const autoAppliedDefaultRef = React.useRef<Map<string, string>>(new Map());
   const identityApplyCountRef = React.useRef(0);
@@ -1282,7 +1286,7 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
     }
   }, [gitDirectory, git, refreshRemotes, refreshStatusAndBranches, t]);
 
-  const handleCommit = async (options: { pushAfter?: boolean } = {}) => {
+  const handleCommit = async (options: { pushAfter?: boolean; origin?: HTMLElement } = {}) => {
     if (!gitDirectory) return;
     if (!commitMessage.trim()) {
       toast.error(t('gitView.toast.enterCommitMessage'));
@@ -1301,14 +1305,14 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
     let commitOutcome: 'pending' | 'local' | 'published' = 'pending';
 
     try {
-      await git.createGitCommit(gitDirectory, commitMessage.trim(), {
+      const commit = await git.createGitCommit(gitDirectory, commitMessage.trim(), {
         files: filesToCommit,
         stageFiles: [],
       });
       commitOutcome = 'local';
       bumpIndexRevision(gitDirectory);
       bumpIndexRevision(gitDirectory);
-      toast.success(t('gitView.toast.commitCreated'));
+      const deletion = commitCelebration.committed(commit.summary, options);
       setCommitMessage('');
       clearGeneratedHighlights();
 
@@ -1323,8 +1327,7 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
         setSyncAction('publish');
         await executePush();
         commitOutcome = 'published';
-        toast.success(t('gitView.publish.succeeded'));
-        triggerFireworks();
+        commitCelebration.pushed({ deletion, origin: options.origin });
       }
       await refreshAfterGitAction(() => setIntegrateRefreshKey((v) => v + 1));
     } catch (err) {
@@ -2537,8 +2540,8 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
                         onInsertHighlights={handleInsertHighlights}
                         onGenerateMessage={handleGenerateCommitMessage}
                         isGeneratingMessage={isGeneratingMessage}
-                        onCommit={() => handleCommit({ pushAfter: false })}
-                        onCommitAndPush={() => handleCommit({ pushAfter: true })}
+                        onCommit={(origin) => handleCommit({ pushAfter: false, origin })}
+                        onCommitAndPush={(origin) => handleCommit({ pushAfter: true, origin })}
                         commitAction={commitAction}
                         networkOperationBlocked={operationRecovery.blocked}
                         hasPendingIndexMutation={hasPendingIndexMutation}
@@ -2547,7 +2550,7 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
                       />
                     </>
                   ) : (
-                      <GitEmptyState onOpenStashes={() => setIsStashesDialogOpen(true)} />
+                      <GitEmptyState key={opening.count} onOpenStashes={() => setIsStashesDialogOpen(true)} />
                   )}
                 </div>
             </ScrollableOverlay>

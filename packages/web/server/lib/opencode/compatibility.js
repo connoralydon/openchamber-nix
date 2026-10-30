@@ -8,12 +8,14 @@ const infoSchema = z.object({ version: versionSchema });
 const legacyHealthSchema = z.object({ version: versionSchema, healthy: z.boolean() });
 
 /**
- * Oldest OpenCode OpenChamber runs against. 2.1.0 added `archived` to
- * `PATCH /api/session/{id}`; an older OpenCode ignores the field and answers
- * 204, so an archive would look done and change nothing. (2.0.20 before it
- * added `GET /api/credential`, 2.0.15 `PATCH /api/session` metadata.)
+ * Oldest OpenCode OpenChamber runs against. 2.2.0 moved text generation to
+ * `POST /api/experimental/generate/text`, the path the pinned client calls;
+ * an older OpenCode answers it 404, so commit messages, PR descriptions and
+ * titles would fail. (2.1.0 before it added `archived` to
+ * `PATCH /api/session/{id}`, 2.0.20 `GET /api/credential`, 2.0.15
+ * `PATCH /api/session` metadata.)
  */
-const MINIMUM_OPENCODE_VERSION = '2.1.0';
+const MINIMUM_OPENCODE_VERSION = '2.2.0';
 
 const releaseParts = (version) => version.split(/[-+]/, 1)[0].split('.').map(Number);
 

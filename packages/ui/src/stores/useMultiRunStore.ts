@@ -112,7 +112,7 @@ export async function dispatchRunPrompt(input: {
     variant: input.variant,
     agent: input.agent,
     files: input.files,
-    knowledgeSync,
+    ready: knowledgeSync,
   });
 }
 

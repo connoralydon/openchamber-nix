@@ -86,7 +86,7 @@ const createOpenCode = () => {
   return { state, fetchImpl };
 };
 
-const createRuntime = ({ dataDir = makeDataDir(), openCode = createOpenCode(), knowledge = null, retryDelayMs, resolveAutoSelection, now, beforeScheduledTaskSend, onScheduledTaskResult, persistSessionGoal } = {}) => {
+const createRuntime = ({ dataDir = makeDataDir(), openCode = createOpenCode(), knowledge = null, retryDelayMs, resolveAutoSelection, now, beforeScheduledTaskSend, onScheduledTaskResult, persistSessionGoal, isDeliveryHeld, deliveryHoldReady } = {}) => {
   let eventHandler = () => {};
   let statusHandler = () => {};
   const broadcasts = [];
@@ -112,6 +112,8 @@ const createRuntime = ({ dataDir = makeDataDir(), openCode = createOpenCode(), k
   if (resolveAutoSelection) options.resolveAutoSelection = resolveAutoSelection;
   if (now) options.now = now;
   if (persistSessionGoal) options.persistSessionGoal = persistSessionGoal;
+  if (isDeliveryHeld) options.isDeliveryHeld = isDeliveryHeld;
+  if (deliveryHoldReady) options.deliveryHoldReady = deliveryHoldReady;
   const runtime = createMessageQueueRuntime(options);
   return {
     runtime,
@@ -675,18 +677,46 @@ describe('message queue runtime', () => {
     expect(openCode.state.sent).toHaveLength(1);
   });
 
-  it('honors a hold until it is released', async () => {
-    const { runtime, openCode, emit } = createRuntime();
+  it('waits while an auto-review holds the session and delivers on release', async () => {
+    let held = true;
+    const { runtime, openCode, emit } = createRuntime({ isDeliveryHeld: (sessionId) => held && sessionId === SESSION });
     runtime.start();
     await runtime.enqueue(SESSION, DIRECTORY, item());
-    runtime.setHold(SESSION, true, 60_000);
     emit({ type: 'session.status', properties: { sessionID: SESSION, status: { type: 'idle' } } });
     await settle();
     expect(openCode.state.sent).toHaveLength(0);
 
-    runtime.setHold(SESSION, false);
+    held = false;
+    runtime.release(SESSION);
     await settle();
     expect(openCode.state.sent).toHaveLength(1);
+  });
+
+  it('delivers a restored queue only once the hold owner has loaded', async () => {
+    const dataDir = makeDataDir();
+    const first = createRuntime({ dataDir });
+    first.openCode.state.active = { [SESSION]: { type: 'running' } };
+    first.runtime.start();
+    await first.runtime.enqueue(SESSION, DIRECTORY, item());
+    await first.runtime.flush();
+    first.runtime.stop();
+
+    let ready = () => {};
+    let held = true;
+    const second = createRuntime({
+      dataDir,
+      isDeliveryHeld: () => held,
+      deliveryHoldReady: new Promise((resolve) => { ready = resolve; }),
+    });
+    second.runtime.start();
+    await settle();
+    expect(second.openCode.state.sent).toHaveLength(0);
+
+    held = false;
+    ready();
+    await settle();
+    expect(second.openCode.state.sent).toHaveLength(1);
+    second.runtime.stop();
   });
 
   it('survives a restart and delivers once OpenCode reconnects', async () => {

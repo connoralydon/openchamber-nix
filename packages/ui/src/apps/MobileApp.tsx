@@ -12,6 +12,7 @@ import { ChatView } from '@/components/views/ChatView';
 import { PlanView } from '@/components/views/PlanView';
 import { SettingsView } from '@/components/views/SettingsView';
 import { AppLinkConfirmDialog } from '@/components/chat/AppLinkConfirmDialog';
+import { SnippetQuickCreateDialog } from '@/components/snippets/SnippetQuickCreateDialog';
 import { SharedTrustConfirmDialog } from '@/components/projects/SharedTrustConfirmDialog';
 import { OpenCodeTrustDialog } from '@/components/projects/OpenCodeTrustDialog';
 import { SpaceAccessDialog } from '@/components/session/spaces/SpaceAccessDialog';
@@ -1382,6 +1383,7 @@ function MobileAppContent({ apis }: MobileAppProps) {
                 setConnectionEpoch((value) => value + 1);
               }} />
               <AppLinkConfirmDialog />
+              <SnippetQuickCreateDialog />
               <SharedTrustConfirmDialog />
               <OpenCodeTrustDialog />
               {isolatedSpacesEnabled ? <><SpaceAccessDialog /><SpaceActionsSheet /><SpaceApplyDialog /><SpaceDeleteDialog /><SpaceSetupOutputDialog /></> : null}

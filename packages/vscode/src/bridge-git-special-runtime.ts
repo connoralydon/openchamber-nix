@@ -39,12 +39,23 @@ type SpecialGitDeps = {
 
 const BRIDGE_GIT_GENERATION_TIMEOUT_MS = 2 * 60 * 1000;
 
-// Waits between retries of `Model unavailable`, ~31 s in total. Right after
+// Waits between retries of an unready catalog, ~31 s in total. Right after
 // OpenCode starts, plugin-provided models (claude-code) stay unavailable for
 // 20-40 s while plugins for the global location load lazily. The rejection
 // precedes provider dispatch, so a retry costs no tokens.
 const UNAVAILABLE_RETRY_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000, 16_000];
 let unavailableRetryDelaysMs = UNAVAILABLE_RETRY_DELAYS_MS;
+
+// Generation waits up to 5 s for the location's plugins, then answers that
+// they are still activating; after them it answers the model missing.
+const isCatalogNotReady = (
+  error: { _tag?: unknown; providerID?: unknown; modelID?: unknown; service?: unknown } | null,
+  providerID: string,
+  modelID: string,
+): boolean => (
+  (error?._tag === 'ModelNotFoundError' && error.providerID === providerID && error.modelID === modelID)
+  || (error?._tag === 'ServiceUnavailableError' && error.service === 'plugin')
+);
 
 /** Test hook: replace the backoff schedule; no argument restores the default. */
 export const setUnavailableRetryDelaysForTest = (delays: number[] = UNAVAILABLE_RETRY_DELAYS_MS): void => {
@@ -173,7 +184,7 @@ const resolveBridgeGitGenerationModel = async (
 };
 
 /**
- * OpenCode 2.x generates one-off text without a session: `POST /api/experimental/generate`
+ * OpenCode 2.x generates one-off text without a session: `POST /api/experimental/generate/text`
  * answers with the finished text, so the old create-session / prompt / poll /
  * delete dance (and every way it could leave a stray session behind) is gone.
  */
@@ -196,7 +207,6 @@ const generateBridgeGitText = async ({
 }): Promise<string> => {
   const client = createBridgeGitClient(apiUrl, authHeaders, directory);
   const signal = AbortSignal.timeout(BRIDGE_GIT_GENERATION_TIMEOUT_MS);
-  const unavailableMessage = `Model unavailable: ${providerID}/${modelID}`;
   const model = variant
     ? { id: modelID, providerID, variant }
     : { id: modelID, providerID };
@@ -205,10 +215,9 @@ const generateBridgeGitText = async ({
       const result = await client.generate.text({ prompt, model }, { signal });
       return result.text.trim();
     } catch (error) {
-      const tagged = error as { _tag?: unknown; message?: unknown } | null;
+      const tagged = error as { _tag?: unknown; providerID?: unknown; modelID?: unknown; service?: unknown } | null;
       // Only the pre-dispatch catalog rejection is retried; other failures must not be.
-      if (tagged?._tag !== 'InvalidRequestError' || tagged.message !== unavailableMessage
-        || attempt >= unavailableRetryDelaysMs.length) {
+      if (!isCatalogNotReady(tagged, providerID, modelID) || attempt >= unavailableRetryDelaysMs.length) {
         throw error;
       }
       await delay(unavailableRetryDelaysMs[attempt], undefined, { signal });

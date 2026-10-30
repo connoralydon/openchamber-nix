@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createHash } from 'crypto';
 import os from 'os';
 import path from 'path';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'fs/promises';
@@ -82,6 +83,50 @@ describe('assessOpenCodeConfig', () => {
     expect((await assessOpenCodeConfig(repo, { homeDirectory: home })).fingerprint).toBe(first.fingerprint);
     await write('.opencode/plugins/probe.js', 'import "node:fs"; export default {}');
     expect((await assessOpenCodeConfig(repo, { homeDirectory: home })).fingerprint).not.toBe(first.fingerprint);
+  });
+
+  it('changes the fingerprint when a repository file a plugin imports changes', async () => {
+    await write('.opencode/plugins/probe.ts', 'import { run } from "../../scripts/helper.js";\nexport default { run };');
+    await write('scripts/helper.ts', 'export { deep } from "./deep";\nexport const run = 1;');
+    await write('scripts/deep.ts', 'export const deep = 1;');
+    const fingerprint = async () => (await assessOpenCodeConfig(repo, { homeDirectory: home })).fingerprint;
+    const first = await fingerprint();
+
+    await write('scripts/helper.ts', 'export { deep } from "./deep";\nexport const run = 2;');
+    const second = await fingerprint();
+    expect(second).not.toBe(first);
+
+    await write('scripts/deep.ts', 'export const deep = 2;');
+    expect(await fingerprint()).not.toBe(second);
+  });
+
+  it('follows imports from plugin folders and configured local plugins', async () => {
+    await write('.opencode/plugins/folder/index.js', 'import "../../../lib/a.js";');
+    await write('tools/plugin.js', 'const b = require("./b");');
+    await write('opencode.json', JSON.stringify({ plugin: ['./tools/plugin.js'] }));
+    await write('lib/a.js', 'one');
+    await write('tools/b.js', 'one');
+    const fingerprint = async () => (await assessOpenCodeConfig(repo, { homeDirectory: home })).fingerprint;
+    const first = await fingerprint();
+
+    await write('lib/a.js', 'two');
+    const second = await fingerprint();
+    expect(second).not.toBe(first);
+    await write('tools/b.js', 'two');
+    expect(await fingerprint()).not.toBe(second);
+  });
+
+  it('changes the fingerprint when a missing import appears, and ignores package imports', async () => {
+    await write('.opencode/plugins/probe.js', 'import "zod"; import "../../lib/later.js";');
+    const before = (await assessOpenCodeConfig(repo, { homeDirectory: home })).fingerprint;
+    await write('lib/later.js', 'export {}');
+    expect((await assessOpenCodeConfig(repo, { homeDirectory: home })).fingerprint).not.toBe(before);
+  });
+
+  it('keeps the fingerprint of a plugin that imports nothing local', async () => {
+    await write('.opencode/plugins/probe.js', 'import { appendFileSync } from "node:fs"; export default {}');
+    const { items } = await assessOpenCodeConfig(repo, { homeDirectory: home });
+    expect(items[0].hash).toBe(createHash('sha256').update('import { appendFileSync } from "node:fs"; export default {}').digest('hex'));
   });
 
   it('reads nothing from OpenCode\'s global configuration directory', async () => {

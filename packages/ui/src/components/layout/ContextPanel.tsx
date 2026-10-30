@@ -47,7 +47,7 @@ import { setWorkStatusHost, useRightSlotStore } from './rightSlot';
 import { changeRequestCopy } from '@/lib/source-control/changeRequestCopy';
 import { useChangeRequestTerm } from '@/lib/source-control/providers/registry';
 import { ContextPanelHeaderSlotProvider } from './contextPanelHeaderSlot';
-import { CLOSED_ZONE_VIEW, CONTEXT_ZONE_DEFAULT_WIDTH, getZoneView, isZoneShown, resolveZoneActiveTab, type ContextZone } from '@/lib/workspace/zones';
+import { CLOSED_ZONE_VIEW, CONTEXT_ZONE_DEFAULT_WIDTH, getZoneView, isZoneShown, resolveZoneActiveTab, sideZoneWidth, type ContextZone } from '@/lib/workspace/zones';
 import { closeZoneOnEscape } from './zoneEscape';
 import { ZoneMoveMenuItems } from './ZoneMoveMenuItems';
 import { beginZoneDrag, cancelZoneDrag, finishZoneDrag, startZoneDragGesture, updateZoneDrag } from './zoneDrag';
@@ -448,6 +448,7 @@ export const ContextPanel: React.FC<{ zone?: ContextZone }> = ({ zone = 'right' 
   const activeTab = panelState ? resolveZoneActiveTab(panelState, placement, zone) : null;
   const zoneView = panelState ? getZoneView(panelState, zone) : CLOSED_ZONE_VIEW;
   const workStatusReserved = useRightSlotStore((state) => state.workStatusReserved);
+  const workStatusBesidePanel = useRightSlotStore((state) => state.workStatusBesidePanel);
   const chatCovered = useRightSlotStore((state) => state.chatCovered);
   // The bottom zone belongs to the chat column: a page covering the chat
   // covers it too.
@@ -503,16 +504,22 @@ export const ContextPanel: React.FC<{ zone?: ContextZone }> = ({ zone = 'right' 
     const tab = panel && isZoneShown(panel, state.contextSurfaceZones, otherSide)
       ? resolveZoneActiveTab(panel, state.contextSurfaceZones, otherSide)
       : null;
-    if (!panel || !tab) return 0;
-    const editorShown = panel.tabs.some((entry) => entry.mode === 'file' && entry.targetPath)
-      && (state.contextEditorVisible || !state.contextEditorTreeVisible);
-    if (tab.mode === 'file' && !editorShown) return state.contextEditorTreeWidth;
-    return state.contextZoneSizes[otherSide] ?? CONTEXT_ZONE_DEFAULT_WIDTH;
+    return panel && tab ? sideZoneWidth(panel, tab, otherSide, state) : 0;
   });
-  // The closed right zone still holds the work-status card's column.
+  // The closed right zone still holds the work-status card's column. Beside
+  // the open panel the card claims no room from this zone: it yields first,
+  // as the chat area narrows, and only stays while the chat keeps more than
+  // its minimum, so this zone is never clamped while the card is there.
   const otherSideReserved = otherSide === 'right' && workStatusReserved && !chatCovered && otherSideWidth === 0
     ? WORK_STATUS_COLUMN_WIDTH
     : otherSideWidth;
+  // The same column in this zone, when it is the right one.
+  const workStatusColumn = zone === 'right' && workStatusReserved && !chatCovered;
+  // Beside the panel the card holds the slot's start and the panel its end.
+  // Decided while closed too: the panel then already sits past the card's
+  // column, so opening slides it in from the edge beside the card, and the
+  // card rides along with the chat's edge rather than fading out.
+  const cardBesidePanel = workStatusColumn && workStatusBesidePanel && !isExpanded;
   const [measuredArea, setMeasuredArea] = React.useState<number | null>(null);
   const measuredAreaSizeRef = React.useRef<number | null>(null);
   const otherSideRef = React.useRef(otherSideReserved);
@@ -662,14 +669,18 @@ export const ContextPanel: React.FC<{ zone?: ContextZone }> = ({ zone = 'right' 
     startSizeRef.current = size;
     resizingSizeRef.current = size;
     // Measure once per drag; no layout reads happen during pointermove.
-    // The same area the ceiling uses: the row less the other side.
+    // The same area the ceiling uses: the row less the other side, and less
+    // the work-status card beside this panel. The drag stops where the chat
+    // would drop under its minimum next to the card; the card yields to a
+    // panel released wider than it fits beside.
     const available = isVertical
       ? panelRef.current?.parentElement?.clientHeight
-      : (panelRef.current?.closest<HTMLElement>('[data-workspace-row]')?.clientWidth ?? 0) - otherSideRef.current;
+      : (panelRef.current?.closest<HTMLElement>('[data-workspace-row]')?.clientWidth ?? 0) - otherSideRef.current
+        - (cardBesidePanel ? WORK_STATUS_COLUMN_WIDTH : 0);
     resizeAvailableSizeRef.current = available && available > 0 ? available : null;
     document.documentElement.style.cursor = isVertical ? 'row-resize' : 'col-resize';
     event.preventDefault();
-  }, [directoryKey, isExpanded, isOpen, isVertical, size]);
+  }, [cardBesidePanel, directoryKey, isExpanded, isOpen, isVertical, size]);
 
   const finishResize = React.useCallback(() => {
     // Apply the final size once, letting the size transition carry the zone
@@ -1058,12 +1069,15 @@ export const ContextPanel: React.FC<{ zone?: ContextZone }> = ({ zone = 'right' 
   // the inline work-status card (rendered into the host below by
   // ChatContainer), and animates one width for both (rightSlot.ts). Closed,
   // it keeps the card's column when the card wants it and the chat is on
-  // screen; open, it is the panel's width. Every value stays interpolable
-  // across open/close (no instant min/max jumps).
-  const workStatusColumn = zone === 'right' && workStatusReserved && !chatCovered;
+  // screen; open, it is the panel's width, plus the card's column when the
+  // card stays beside the panel. Every value stays interpolable across
+  // open/close (no instant min/max jumps).
   const slotSize = !isOpen
     ? (workStatusColumn ? `${WORK_STATUS_COLUMN_WIDTH}px` : '0px')
-    : `min(var(${geometry.sizeVariable}), 100%)`;
+    : cardBesidePanel
+      ? `calc(var(${geometry.sizeVariable}) + ${WORK_STATUS_COLUMN_WIDTH}px)`
+      : `min(var(${geometry.sizeVariable}), 100%)`;
+  const panelOffset = cardBesidePanel ? `${WORK_STATUS_COLUMN_WIDTH}px` : '0px';
 
   // The bottom card spans the chat column. Next to a card on either side it
   // gives up its own gutter on that side, so neighbours stand one gutter apart.
@@ -1075,7 +1089,7 @@ export const ContextPanel: React.FC<{ zone?: ContextZone }> = ({ zone = 'right' 
   // size. Only these animate as an announced layout animation; the chat area
   // resizing (a window drag, a clamp) is tracked without one, so the work
   // that waits for an animation's end is not held back for the whole drag.
-  const animationKey = `${isOpen}|${isExpanded}|${workStatusColumn}|${isOpen ? desiredSize : ''}`;
+  const animationKey = `${isOpen}|${isExpanded}|${workStatusColumn}|${isOpen && cardBesidePanel}|${isOpen ? desiredSize : ''}`;
   const animationKeyRef = React.useRef(animationKey);
   // A surface page covering or uncovering the chat moves the slot while the
   // chat is not on screen: that change snaps.
@@ -1153,9 +1167,12 @@ export const ContextPanel: React.FC<{ zone?: ContextZone }> = ({ zone = 'right' 
           the card, which is still inert then. */}
       <div ref={focusSinkRef} tabIndex={-1} className="absolute size-0 overflow-hidden outline-none" />
       {/* The inline work-status card's host, right-anchored under the panel:
-          the card fades out while the panel fades in over it, and back. */}
+          the card fades out while the panel fades in over it, and back.
+          Beside the panel it sits at the slot's start instead, ahead of the
+          panel. Closed, the slot is the card's column, so both anchors put the
+          card in the same place and switching between them moves nothing. */}
       {zone === 'right' ? (
-        <div ref={setWorkStatusHost} className={cn('absolute inset-y-0 inset-e-0 z-0 flex', chatCovered && 'invisible')} />
+        <div ref={setWorkStatusHost} className={cn('absolute inset-y-0 z-0 flex', cardBesidePanel ? 'inset-s-0' : 'inset-e-0', chatCovered && 'invisible')} />
       ) : null}
       {isOpen && !isExpanded && (
         // In the gutter facing the chat, along the card's edge. Nothing paints
@@ -1163,6 +1180,7 @@ export const ContextPanel: React.FC<{ zone?: ContextZone }> = ({ zone = 'right' 
         // itself moves on release.
         <div
           className={geometry.handle}
+          style={{ marginInlineStart: panelOffset }}
           onPointerDown={handleResizeStart}
           role="separator"
           aria-orientation={isVertical ? 'horizontal' : 'vertical'}
@@ -1187,7 +1205,9 @@ export const ContextPanel: React.FC<{ zone?: ContextZone }> = ({ zone = 'right' 
           'oc-panel-edge overflow-hidden rounded-[10px] bg-background',
           // Size animates in sync with the zone (surface switches, resize
           // release).
-          isVertical ? 'transition-[height,opacity]' : 'transition-[width,opacity]',
+          // The offset past the card's column moves with the slot's width, so
+          // the panel's edge stays put when the card comes or goes beside it.
+          isVertical ? 'transition-[height,opacity]' : 'transition-[width,opacity,margin-inline-start]',
           !isOpen && 'opacity-0',
           contentHidden && 'pointer-events-none select-none'
         )}
@@ -1195,6 +1215,8 @@ export const ContextPanel: React.FC<{ zone?: ContextZone }> = ({ zone = 'right' 
           ...(isVertical
             ? { height: cardSize, width: `calc(100% - ${(leftZoneShown ? 0 : 0.5) + (rightSlotFilled ? 0 : 0.375)}rem)` }
             : { width: cardSize }),
+          // Past the card's column beside it, in addition to the gutter's ms-2.
+          ...(zone === 'right' ? { marginInlineStart: `calc(0.5rem + ${panelOffset})` } : null),
           transitionDuration: `${layoutAnimationMs}ms`,
           transitionTimingFunction: LAYOUT_ANIMATION_EASING,
         }}

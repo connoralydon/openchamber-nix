@@ -350,22 +350,14 @@ const unsupportedWebRouteResponse = (feature: string): Response => {
  * as 400, the rest as 500. A host failure whose code is in `answeredCodes`
  * comes back as 409 with that code, the way the web server's route answers it.
  */
-const bridgeJsonRoute = async (bridgeType: string, payload: unknown, answeredCodes: readonly string[] = []): Promise<Response> => {
+const bridgeJsonRoute = async (bridgeType: string, payload: unknown): Promise<Response> => {
   try {
     return jsonResponse(await sendBridgeMessage(bridgeType, payload), 200);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Request failed';
-    if (error instanceof BridgeRequestError && error.code && answeredCodes.includes(error.code)) {
-      return jsonResponse({ error: message, code: error.code }, 409);
-    }
     return jsonResponse({ error: message }, /must be|is required|session id/.test(message) ? 400 : 500);
   }
 };
-
-// The host could not write metadata because the session's folder is gone; the
-// UI then offers archive. Mirrors `SESSION_DIRECTORY_MISSING_CODE` in
-// packages/vscode/src/bridge-system-runtime.ts.
-const SESSION_DIRECTORY_MISSING_CODE = 'SESSION_DIRECTORY_MISSING';
 
 const pluginConfigErrorStatus = (message: string): number => {
   const lower = message.toLowerCase();
@@ -469,7 +461,7 @@ const handleLocalApiRequest = async (input: RequestInfo | URL, url: URL, init: R
     if (method === 'GET') return bridgeJsonRoute('api:sessions/metadata:get', { sessionId });
     const body = await extractJsonBody(input, init, method);
     const patch = body && typeof body === 'object' && !Array.isArray(body) ? (body as { patch?: unknown }).patch : undefined;
-    return bridgeJsonRoute('api:sessions/metadata:set', { sessionId, patch }, [SESSION_DIRECTORY_MISSING_CODE]);
+    return bridgeJsonRoute('api:sessions/metadata:set', { sessionId, patch });
   }
 
   if (/^\/api\/projects\/[^/]+\/scheduled-tasks(?:\/[^/]+)?$/.test(normalizedPathname)) {
@@ -884,7 +876,9 @@ const handleLocalApiRequest = async (input: RequestInfo | URL, url: URL, init: R
       return new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return new Response(JSON.stringify({ error: message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+      // The same status the web server gives a taken name, which the UI tells apart.
+      const status = message.includes('already exists') ? 409 : 500;
+      return new Response(JSON.stringify({ error: message }), { status, headers: { 'Content-Type': 'application/json' } });
     }
   }
 

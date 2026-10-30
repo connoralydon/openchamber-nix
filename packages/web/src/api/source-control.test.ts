@@ -78,7 +78,7 @@ describe('createWebSourceControlAPI', () => {
       body: '', bodyTruncated: false, createdAt: null, updatedAt: null, author: null, labels: [], commentCount: 0,
       sourceRepo: { owner: 'acme', repo: 'app', source: 'origin' }, state: 'open', directory: readContext.directory,
     }], cursor: null, hasMore: false, total: 1,
-    repositories: [{ directory: readContext.directory, status: 'included', repo: { owner: 'acme', repo: 'app', url: 'https://github.com/acme/app' } },
+    repositories: [{ directory: readContext.directory, status: 'included', repo: { owner: 'acme', repo: 'app', host: 'github.com', url: 'https://github.com/acme/app' } },
       { directory: '/missing', status: 'no-repo' }],
     };
     runtimeFetchMock.mockResolvedValueOnce(Response.json(payload));

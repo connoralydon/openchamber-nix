@@ -13,6 +13,7 @@ let effectiveDirectory = '/repo';
 const openContextPreviewCalls: Array<[string, string]> = [];
 const createSessionCalls: Array<{ cwd: string }> = [];
 const connectCalls: string[] = [];
+const closeCalls: string[] = [];
 const ensureDirectoryCalls: string[] = [];
 const openContextPreview = (directory: string, url: string) => {
   openContextPreviewCalls.push([directory, url]);
@@ -26,7 +27,7 @@ const terminalRuntime = {
   createSession,
   sendInput: async () => undefined,
   resize: async () => undefined,
-  close: async () => undefined,
+  close: async (sessionId: string) => { closeCalls.push(sessionId); },
   updateAppearance: async () => undefined,
   connect: (sessionId: string, handlers: TerminalHandlers) => {
     connectCalls.push(sessionId);
@@ -59,6 +60,7 @@ const uiState = {
   terminalShell: 'zsh',
   terminalLoginShells: ['zsh'],
   showTerminalQuickKeysOnDesktop: false,
+  terminalCloseOnExit: true,
   openContextPreview,
 };
 
@@ -197,6 +199,8 @@ describe('TerminalView project action tab indicator', () => {
     openContextPreviewCalls.length = 0;
     createSessionCalls.length = 0;
     connectCalls.length = 0;
+    closeCalls.length = 0;
+    uiState.terminalCloseOnExit = true;
     ensureDirectoryCalls.length = 0;
     connectBehavior = () => ({ close: () => undefined });
     deviceInfo = { isMobile: false, isTablet: false, hasTouchOnlyPointer: false };
@@ -316,6 +320,72 @@ describe('TerminalView project action tab indicator', () => {
 
     expect(lastTabClosedCalls).toBe(0);
     expect(useTerminalStore.getState().getDirectoryState('/repo')!.tabs).toHaveLength(2);
+  });
+
+  const exitActiveTab = async (label: string) => {
+    const store = useTerminalStore.getState();
+    const tab = store.getDirectoryState('/repo')!.tabs.find((entry) => entry.label === label)!;
+    store.setTabSessionId('/repo', tab.id, `srv-${label}`);
+    store.setActiveTab('/repo', tab.id);
+    connectBehavior = (_sessionId, handlers) => {
+      void Promise.resolve().then(() => handlers.onEvent({ type: 'exit', exitCode: 0 }));
+      return { close: () => undefined };
+    };
+    await act(async () => root.render(React.createElement(TerminalView, { visible: true })));
+    await flushEffects();
+    return tab.id;
+  };
+
+  test('a shell that exits closes its tab and releases the server session', async () => {
+    const tabId = await exitActiveTab('Interactive');
+
+    expect(closeCalls).toEqual(['srv-Interactive']);
+    expect(useTerminalStore.getState().getDirectoryState('/repo')!.tabs.some((tab) => tab.id === tabId)).toBe(false);
+  });
+
+  test('a shell that exits keeps its tab when closing on exit is off', async () => {
+    uiState.terminalCloseOnExit = false;
+    const tabId = await exitActiveTab('Interactive');
+
+    expect(closeCalls).toEqual([]);
+    expect(useTerminalStore.getState().getDirectoryState('/repo')!.tabs.find((tab) => tab.id === tabId)?.lifecycle).toBe('exited');
+  });
+
+  test('a project action that exits closes its tab too', async () => {
+    const tabId = await exitActiveTab('Build');
+
+    expect(closeCalls).toEqual(['srv-Build']);
+    expect(useTerminalStore.getState().getDirectoryState('/repo')!.tabs.some((tab) => tab.id === tabId)).toBe(false);
+  });
+
+  test('a project action the server force-kills on stop closes its tab without a second close', async () => {
+    const store = useTerminalStore.getState();
+    const tab = store.getDirectoryState('/repo')!.tabs.find((entry) => entry.label === 'Build')!;
+    store.setTabSessionId('/repo', tab.id, 'srv-Build');
+    store.setActiveTab('/repo', tab.id);
+    connectBehavior = (_sessionId, handlers) => {
+      void Promise.resolve().then(() => {
+        // The action runner's own subscription sees the message first and clears the session.
+        useTerminalStore.getState().setTabSessionId('/repo', tab.id, null);
+        handlers.onError?.(Object.assign(new Error('Terminal was killed'), { code: 'KILLED' }), true);
+      });
+      return { close: () => undefined };
+    };
+    await act(async () => root.render(React.createElement(TerminalView, { visible: true })));
+    await flushEffects();
+
+    expect(closeCalls).toEqual([]);
+    expect(useTerminalStore.getState().getDirectoryState('/repo')!.tabs.some((entry) => entry.id === tab.id)).toBe(false);
+    expect(host.textContent).not.toContain('terminalView.error.connectionFailed');
+  });
+
+  test('a project action that exits keeps its output when closing on exit is off', async () => {
+    uiState.terminalCloseOnExit = false;
+    const tabId = await exitActiveTab('Build');
+
+    expect(closeCalls).toEqual([]);
+    expect(useTerminalStore.getState().getDirectoryState('/repo')!.tabs.find((tab) => tab.id === tabId)?.lifecycle).toBe('exited');
+    expect(readBufferContent('/repo', tabId)).toContain('terminalView.stream.processExitedMessage');
   });
 
   test('shows the shared spinner while a project action starts, runs or stops, and its own icon otherwise', async () => {

@@ -1,11 +1,13 @@
 import { asNonEmptyString, isBoolean } from '../shared/guards.js';
 import path from 'node:path';
+import nodeFsPromises from 'node:fs/promises';
 import { OpenCode } from '@opencode/client';
 import { OpenChamberControlError, asControlError } from './error.js';
 import { OPENCHAMBER_ALL_ACTIONS, OPENCHAMBER_KNOWLEDGE_ACTIONS } from './actions.js';
 import { writeScreenshot } from './screenshots.js';
 import { createProjectKnowledgeActions } from './project-knowledge.js';
 import { createPageAnswers, createRenderPageAction } from './render-page.js';
+import { createImageGenerationAction } from './generate-image.js';
 import { createWorkNamer } from '../openchamber-sessions/work-naming.js';
 
 const DEFAULT_WAIT_TIMEOUT_SECONDS = 600;
@@ -237,6 +239,9 @@ export const createOpenChamberControlService = (dependencies) => {
     // Delivers a dispatched session's result back to the session that asked
     // (`returnResult`); absent means the server cannot offer it.
     dispatchResults = null,
+    // An agent waiting on its pull request (../pr-watch); absent means the
+    // server cannot offer it.
+    prWatch = null,
     // Agent workflows (../workflows/runtime.js); absent where they are not
     // available, which is every build without OPENCHAMBER_WORKFLOWS_ENABLE.
     workflowRuntime = null,
@@ -246,6 +251,8 @@ export const createOpenChamberControlService = (dependencies) => {
     // Whether OpenCode may open a folder (../opencode-trust); absent opens every folder.
     isOpenCodeDirectoryTrusted = null,
     createClient = OpenCode.make,
+    // Reads an agent's reference images and writes the generated ones.
+    imageFsPromises = nodeFsPromises,
     sleep = (duration) => new Promise((resolve) => setTimeout(resolve, duration)),
     now = Date.now,
   } = dependencies;
@@ -352,6 +359,11 @@ export const createOpenChamberControlService = (dependencies) => {
 
   const pageAnswers = createPageAnswers({ onWaitChange: onPageWaitChange });
   const renderPage = createRenderPageAction({ isEnabled: isRenderToolEnabled, pageAnswers });
+  const generateImage = createImageGenerationAction({
+    getClient,
+    readSettings: readSettingsFromDiskMigrated,
+    fsPromises: imageFsPromises,
+  });
 
   const models = async () => {
     const settings = await readSettingsFromDiskMigrated();
@@ -887,6 +899,9 @@ export const createOpenChamberControlService = (dependencies) => {
           signal: options.signal,
         });
       }
+      if (action === 'image.generate') {
+        return await generateImage(input, { directory: asNonEmptyString(contextDirectory), signal: options.signal });
+      }
       if (action === 'file.open') {
         if (!fileOpen) {
           throw new OpenChamberControlError('The file viewer is not available on this server', 503);
@@ -960,6 +975,19 @@ export const createOpenChamberControlService = (dependencies) => {
         const link = input.link ?? { url: input.url, title: input.title, kind: input.kind, identifier: input.identifier };
         return sessionLinks.link({ sessionId: sessionID, directory, link });
       }
+      if (action === 'pr.watch' || action === 'pr.unwatch') {
+        if (!prWatch) throw new OpenChamberControlError('Waiting on a pull request is not available on this server', 503);
+        // Always the calling session: it is the one a change wakes.
+        const sessionID = asNonEmptyString(options.contextSessionId);
+        if (!sessionID) throw new OpenChamberControlError(`${action} must be called from a session`, 400);
+        try {
+          if (action === 'pr.unwatch') return await prWatch.unwatch(sessionID);
+          const directory = (await resolveSessionDirectory(sessionID)) || asNonEmptyString(contextDirectory);
+          return await prWatch.watch({ sessionID, directory, url: input.url });
+        } catch (error) {
+          throw new OpenChamberControlError(error?.message ?? String(error), Number.isInteger(error?.status) ? error.status : 500);
+        }
+      }
       if (action === 'work.name') {
         if (!workNamer) throw new OpenChamberControlError('Naming tasks is not available on this server', 503);
         const sessionID = asNonEmptyString(input.sessionId) || asNonEmptyString(options.contextSessionId);
@@ -985,7 +1013,13 @@ export const createOpenChamberControlService = (dependencies) => {
         const payload = { worktree };
         if (directory) payload.directory = directory;
         if (input.carry !== undefined) payload.carry = input.carry;
-        return sessionService.moveToWorktree(sessionID, payload);
+        const moved = await sessionService.moveToWorktree(sessionID, payload);
+        // A new branch takes the task's name along; an existing branch keeps its own.
+        if (workNamer && !existingBranch && moved?.worktree?.path) {
+          await workNamer.carryToWorktree({ sessionId: sessionID, worktree: moved.worktree.path })
+            .catch((error) => console.warn('Failed to carry the task name into the new worktree:', error instanceof Error ? error.message : String(error)));
+        }
+        return moved;
       }
       if (action.startsWith('session.')) {
         const sessionID = asNonEmptyString(input.sessionId);

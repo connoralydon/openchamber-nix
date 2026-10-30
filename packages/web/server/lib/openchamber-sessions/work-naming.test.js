@@ -123,3 +123,27 @@ describe('work.name', () => {
     });
   });
 });
+
+describe('carrying a task name into a new worktree', () => {
+  it('names the worktree after the moved session, keeping who named it', async () => {
+    const { namer, setWorktreeTaskTitle } = setup({
+      sessions: [
+        { id: 'agent', title: 'Login fix', metadata: { openchamber: { workTitle: { title: 'Login fix', by: 'agent' } } } },
+        { id: 'renamed', title: 'My login fix', metadata: { openchamber: { workTitle: { title: 'Login fix', by: 'agent' } } } },
+      ],
+    });
+
+    await namer.carryToWorktree({ sessionId: 'agent', worktree: '/wt/a' });
+    await namer.carryToWorktree({ sessionId: 'renamed', worktree: '/wt/b' });
+
+    expect(setWorktreeTaskTitle).toHaveBeenNthCalledWith(1, '/wt/a', { title: 'Login fix', by: 'agent' });
+    expect(setWorktreeTaskTitle).toHaveBeenNthCalledWith(2, '/wt/b', { title: 'My login fix', by: 'user' });
+  });
+
+  it('leaves the worktree unnamed when nobody named the task', async () => {
+    const { namer, setWorktreeTaskTitle } = setup({ sessions: [{ id: 's', title: 'New session - 2026-10-27' }] });
+
+    expect(await namer.carryToWorktree({ sessionId: 's', worktree: '/wt/a' })).toBeNull();
+    expect(setWorktreeTaskTitle).not.toHaveBeenCalled();
+  });
+});

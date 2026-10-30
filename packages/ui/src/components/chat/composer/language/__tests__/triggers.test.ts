@@ -116,6 +116,18 @@ describe('mention picker', () => {
         expect(at('@build now|')).toBeNull();
     });
 
+    test('a space keeps it open while the query still names a session', () => {
+        const sessions: TriggerContext = {
+            inputMode: 'normal',
+            mentionContinuesPastSpace: (query) => 'release notes'.startsWith(query.toLowerCase()),
+        };
+        expect(at('see @Release no|', sessions)).toEqual({ kind: 'mention', query: 'Release no' });
+        expect(at('@release |', sessions)).toEqual({ kind: 'mention', query: 'release ' });
+        expect(at('@release notes are|', sessions)).toBeNull();
+        expect(at('@ release|', sessions)).toBeNull();
+        expect(at('@release\nnotes|', sessions)).toBeNull();
+    });
+
     test('a pasted at-sign does not open the picker', () => {
         expect(at('@src/app.ts|', {
             inputMode: 'normal',

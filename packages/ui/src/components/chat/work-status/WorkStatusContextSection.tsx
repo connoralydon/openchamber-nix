@@ -352,7 +352,7 @@ export const WorkStatusContextSection: React.FC<Props> = ({ sessionId, directory
   // The kind, never the author: an agent's link has no avatar, and a mix of
   // faces and icons hid which row was a PR. An issue reads as an issue
   // wherever it lives (GitHub, GitLab, an agent's or an extension's link) and
-  // wears its state's colour, muted, as on a sidebar row.
+  // wears its state's colour, as on a sidebar row.
   const renderLinkedIcon = (entry: (typeof linked)[number]) => {
     const color = liveLookOf(entry)?.color;
     return (
@@ -409,7 +409,7 @@ export const WorkStatusContextSection: React.FC<Props> = ({ sessionId, directory
                 event.stopPropagation();
                 unlinkLinkedThread(entry);
               }}
-              className="shrink-0 rounded p-0.5 text-muted-foreground/60 transition-colors hover:text-foreground disabled:opacity-40 disabled:hover:text-muted-foreground/60"
+              className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40 disabled:hover:text-muted-foreground"
             >
               <Icon name="close" className="size-3.5" />
             </button>

@@ -7,8 +7,9 @@
 const STATUSES = new Set(['disconnected', 'unavailable']);
 
 /**
- * `readLiveSummaries({ provider, instance, accountId, refs, issueRefs, discussionRefs })`
- * is the source-control module's provider-neutral reader: it answers
+ * `readLiveSummaries({ provider, instance, accountId, refs, issueRefs, discussionRefs, details })`
+ * is the source-control module's provider-neutral reader (`details` adds a
+ * pull request's failed check names and newest comments): it answers
  * `{ connected: false }` without an account, else `{ connected: true,
  * summaries, issueSummaries, discussionSummaries }`, or a provider's own `{ status }` (GitHub's
  * per-host rate limit and refused token). `trackers` is the tracker
@@ -16,9 +17,9 @@ const STATUSES = new Set(['disconnected', 'unavailable']);
  */
 export function createTrackedItemReaders({ readLiveSummaries, trackers }) {
   return {
-    async sourceControl({ provider, instance, accountId = null, pulls, issues, discussions = [] }) {
+    async sourceControl({ provider, instance, accountId = null, pulls, issues, discussions = [], details = false }) {
       if (!(readLiveSummaries instanceof Function)) return { status: 'disconnected' };
-      const result = await readLiveSummaries({ provider, instance, accountId, refs: pulls, issueRefs: issues, discussionRefs: discussions });
+      const result = await readLiveSummaries({ provider, instance, accountId, refs: pulls, issueRefs: issues, discussionRefs: discussions, details });
       if (!result?.connected) return { status: 'disconnected' };
       if (STATUSES.has(result.status)) {
         return Number.isFinite(result.retryAfterMs)

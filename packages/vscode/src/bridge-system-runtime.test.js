@@ -306,21 +306,7 @@ describe('VS Code system bridge api:sessions/metadata:set', () => {
   const failingWith = (error) => ({ ...deps, sessionState: { setMetadata: async () => { throw error; } } });
   const message = { id: 'meta', type: 'api:sessions/metadata:set', payload: { sessionId: 'ses_a', patch: { openchamber: { work: { state: 'done' } } } } };
 
-  test('codes a write OpenCode refused because the session folder is gone', async () => {
-    const locationNotFound = Object.assign(new Error('Location not found: /repo/wt-gone'), { name: 'LocationNotFoundError' });
-
-    const response = await handleSystemBridgeMessage(message, { manager }, failingWith(locationNotFound));
-
-    expect(response).toEqual({
-      id: 'meta',
-      type: 'api:sessions/metadata:set',
-      success: false,
-      error: 'Location not found: /repo/wt-gone',
-      code: 'SESSION_DIRECTORY_MISSING',
-    });
-  });
-
-  test('leaves any other failed write uncoded', async () => {
+  test('reports a failed write', async () => {
     const response = await handleSystemBridgeMessage(message, { manager }, failingWith(new Error('OpenCode is down')));
 
     expect(response).toEqual({ id: 'meta', type: 'api:sessions/metadata:set', success: false, error: 'OpenCode is down' });

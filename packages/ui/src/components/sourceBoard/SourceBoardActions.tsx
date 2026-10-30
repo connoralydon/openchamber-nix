@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { useMobileAppActions } from '@/apps/mobileAppContext';
+import { useFireworksCelebration } from '@/contexts/FireworksContext';
 import { Icon } from '@/components/icon/Icon';
 import { DiffViewIcon } from '@/components/icons/DiffIcon';
 import { REFERENCE_META_TEXT, referenceNumberLabel } from '@/components/references/referencePickerItems';
@@ -131,6 +132,7 @@ export const SourceBoardActions: React.FC<{
     const { t } = useI18n();
     const { sourceControl, trackers } = useRuntimeAPIs();
     const confirmation = useConfirmDialog();
+    const { triggerFireworks } = useFireworksCelebration();
     const [busy, setBusy] = React.useState<'merge' | 'ready' | null>(null);
 
     const pull: RepositoryChangeRequestReference | null = item.source === 'repository' && item.reference.kind === 'pull' ? item.reference : null;
@@ -203,7 +205,7 @@ export const SourceBoardActions: React.FC<{
     const stackOnTop = onStartOnTop && openPull && descriptor.features.branchHeads && isStackable(openPull) ? () => onStartOnTop(openPull) : null;
     const stackOnTopLabel = t('stacks.actions.newOnTop');
 
-    const merge = async () => {
+    const merge = async (origin?: HTMLElement) => {
         if (!openPull || !context || !mergeMethod || submitBlocked) return;
         const methodNote = t(MERGE_METHOD_KEYS[mergeMethod], { base: openPull.base });
         const stackNote = submits
@@ -230,6 +232,8 @@ export const SourceBoardActions: React.FC<{
                 method: mergeMethod,
             });
             const { merged, outcome, message } = receipt.result;
+            // One volley more than a push, plus one for each layer of a stack landing with it.
+            if (merged) triggerFireworks({ kind: 'merge', volleys: 2 + landsBelow.length, origin });
             if (submits) {
                 if (merged) toast.success(t('sourceBoard.toast.submitted', { reference }));
                 else toast.message(t('sourceBoard.toast.notSubmitted', { reference }), { description: message });
@@ -284,7 +288,7 @@ export const SourceBoardActions: React.FC<{
                         // Two halves of one control: the inner corners stay square.
                         className={cn(mergeMethods.length > 1 && 'rounded-e-none')}
                         disabled={busy === 'merge' || submitBlocked}
-                        onClick={() => void merge()}
+                        onClick={(event) => void merge(event.currentTarget)}
                     >
                         <Icon name={busy === 'merge' ? 'loader-4' : 'git-merge'} className={busy === 'merge' ? 'size-3.5 animate-spin' : 'size-3.5'} />
                         {t(MERGE_METHOD_LABELS[mergeMethod])}

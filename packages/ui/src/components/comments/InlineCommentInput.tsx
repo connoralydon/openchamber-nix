@@ -27,6 +27,11 @@ export interface InlineCommentInputProps {
    * previews, where there are no selected lines for a band to continue.
    */
   floating?: boolean;
+  /**
+   * The tinted band around the field. Off for a comment on no lines (a whole
+   * file's, in its header), where there are no selected lines to continue.
+   */
+  band?: boolean;
 }
 
 const MAX_FIELD_HEIGHT_PX = 120;
@@ -56,6 +61,7 @@ export function InlineCommentInput({
   maxWidth,
   bandColor,
   floating = false,
+  band = true,
 }: InlineCommentInputProps) {
   const { t } = useI18n();
   const { isMobile } = useDeviceInfo();
@@ -176,12 +182,12 @@ export function InlineCommentInput({
     <div
       className={cn(
         'w-full max-w-[min(100%,calc(var(--oc-context-panel-width,100vw)-var(--oc-editor-gutter-width,0px)))] font-sans',
-        !floating && 'oc-inline-comment-band px-3 py-2',
+        !floating && band && 'oc-inline-comment-band px-3 py-2',
         className
       )}
       style={{
         maxWidth: maxWidth ? `${Math.max(200, Math.floor(maxWidth))}px` : undefined,
-        backgroundColor: floating ? undefined : bandColor,
+        backgroundColor: floating || !band ? undefined : bandColor,
       }}
       data-comment-input="true"
       onPointerDown={(e) => e.stopPropagation()}

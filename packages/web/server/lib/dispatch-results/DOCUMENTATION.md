@@ -21,6 +21,10 @@ terminal has no session to deliver into.
   `readDispatchOutcome` and `buildDispatchResultMessage`. Workflow runs
   (`../workflows`) reuse `readDispatchOutcome` to tell when an agent's turn
   ended, and `createMessageId` and `escapeAttribute` for their report.
+  Auto-review (`../auto-review`) reads each step's end with
+  `readDispatchOutcome(..., { withText: true })`, which takes the text from
+  the newest reply of the turn that has any, and mints its ids with
+  `createMessageId`.
 - `runtime.test.js` — delivery, waiting on running sessions and subagents,
   archived and deleted parents, a deleted dispatched session, idempotent
   retries, unknown versus idle, restart, a corrupt file.

@@ -11,6 +11,9 @@ import { useContextWindowLimits } from '@/hooks/useContextWindowLimits';
 import { useUIStore } from '@/stores/useUIStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { resolveProjectForSessionDirectory } from '@/lib/projectResolution';
+import { useSpaceProjectDirectory } from '@/lib/spaces/spaces-store';
+import { useDraftSpaceTarget } from '@/lib/spaces/useDraftSpaceTarget';
+import { panelContentDirectory } from '@/lib/spaces/space-creation-requests';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { resolveUsageTone } from '@/lib/quota';
 import { sessionEvents } from '@/lib/sessionEvents';
@@ -83,7 +86,11 @@ export const WorkStatusPrimaryGroup: React.FC<Props> = ({ sessionId, directory, 
   // folder of repositories still reports the branch and changes the Git tab
   // shows. Navigation below stays keyed on `directory` — context-panel tabs
   // are per project root.
-  const { gitDirectory } = useNestedGitDirectory(directory, { enabled: showRepository });
+  // A draft waiting for a new space reads the space's tree once it runs, and
+  // none while it is made, as the other panels do (`panelContentDirectory`).
+  const draftSpace = useDraftSpaceTarget();
+  const repositoryDirectory = sessionId ? directory : panelContentDirectory(draftSpace, directory);
+  const { gitDirectory } = useNestedGitDirectory(repositoryDirectory, { enabled: showRepository });
 
   const gitStatus = useGitStore(
     React.useCallback(
@@ -153,27 +160,29 @@ export const WorkStatusPrimaryGroup: React.FC<Props> = ({ sessionId, directory, 
   // when the readouts come from a nested repository; for a project that is a
   // repository itself the section header already names it.
   const nestedRepoLabel = React.useMemo(() => {
-    if (!directory || !gitDirectory || gitDirectory === directory) return null;
-    const rootPrefix = `${directory}/`;
+    if (!repositoryDirectory || !gitDirectory || gitDirectory === repositoryDirectory) return null;
+    const rootPrefix = `${repositoryDirectory}/`;
     return gitDirectory.startsWith(rootPrefix) ? gitDirectory.slice(rootPrefix.length) : gitDirectory;
-  }, [directory, gitDirectory]);
+  }, [gitDirectory, repositoryDirectory]);
 
   const availableWorktreesByProject = useSessionUIStore((state) => state.availableWorktreesByProject);
   // Worktrees normally sit beside rather than beneath their project directory,
   // so a prefix match alone cannot find their owning project. Reuse the shared
   // session-directory resolver, which consults the discovered worktree map.
+  const spaceProjectDirectory = useSpaceProjectDirectory(directory);
   const projectLabel = useProjectsStore(
     React.useCallback((state) => {
       const project = resolveProjectForSessionDirectory(
         state.projects,
         availableWorktreesByProject,
         directory,
+        spaceProjectDirectory,
       );
       if (!project) return null;
       return project.label?.trim()
         || project.path.split('/').filter(Boolean).pop()
         || project.path;
-    }, [availableWorktreesByProject, directory]),
+    }, [availableWorktreesByProject, directory, spaceProjectDirectory]),
   );
 
   // Read-only: PR watching is owned by the background tracker. Starting a watch

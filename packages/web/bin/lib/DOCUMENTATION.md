@@ -145,11 +145,7 @@ These modules hold reusable, non-presentational logic for commands.
 - Add new CLI commands as `commands-*.js` modules and wire them from `cli.js`.
 - Add reusable logic to the narrow helper module that owns the domain. Create a new helper module before mixing unrelated domains into an existing one.
 - Keep command modules responsible for user-visible behavior and mode-specific output. Keep helper modules mostly output-free unless the helper exists specifically for CLI rendering.
-- Preserve output contracts when moving code:
-  - `--json` emits JSON only.
-  - `--quiet` emits concise essential output.
-  - Prompts are gated by `canPrompt(options)`.
-  - Validation and policy run in every mode.
+- Preserve the mode output contract when moving code (`clack-cli-patterns`, *Mode Contract*).
 - Prefer dependency injection from `cli.js` for cross-command behavior, especially when one command needs another command's implementation.
 - Do not import `cli.js` from modules in this directory. The dependency direction is `cli.js` -> command modules -> helper modules.
 
@@ -159,11 +155,4 @@ For CLI behavior changes, run the focused CLI suite from `packages/web`:
 
 ```sh
 bun run test -- bin/cli.test.js
-```
-
-Before finalizing source changes that affect CLI behavior, also run:
-
-```sh
-bun run type-check
-bun run lint
 ```

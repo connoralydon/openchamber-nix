@@ -7,6 +7,7 @@ import path from 'node:path';
 
 import {
   getProviderSources,
+  getStoredProviderConfig,
   removeProviderConfig,
   upsertProviderConfig,
   validateCustomProviderConfig,
@@ -464,6 +465,45 @@ describe('custom provider config persistence (VS Code parity)', () => {
       } else {
         process.env.OPENCODE_CONFIG = previousEnv;
       }
+    }
+  });
+
+  test('finds, edits and removes a provider from a global opencode.jsonc next to opencode.json in place', () => {
+    const jsonPath = path.join(OPENCODE_CONFIG_DIR, 'opencode.json');
+    const jsoncPath = path.join(OPENCODE_CONFIG_DIR, 'opencode.jsonc');
+    const jsonConfig = { autoupdate: true };
+    // Settings turned dots3 off, which it records in the primary file.
+    writeJson(jsonPath, { ...jsonConfig, disabled_providers: ['dots3', 'other'] });
+    fs.writeFileSync(jsoncPath, [
+      '{',
+      '  // providers live only in the jsonc file',
+      '  "providers": { "dots3": { "name": "dots3", "package": "aisdk:@ai-sdk/openai-compatible",',
+      '    "settings": { "baseURL": "https://old.example.com/v1" }, "models": { "m": { "modelID": "m", "name": "M" } } } }',
+      '}',
+    ].join('\n'), 'utf8');
+
+    try {
+      assert.deepEqual(getProviderSources('dots3', projectDir).user, { exists: true, path: jsoncPath });
+      assert.deepEqual(getProviderSources('new-llm', projectDir).user, { exists: false, path: jsonPath });
+
+      const result = upsertProviderConfig('dots3', {
+        name: 'dots3',
+        npm: '@ai-sdk/openai-compatible',
+        settings: { baseURL: 'https://new.example.com/v1' },
+        models: { m: { name: 'M' } },
+      }, projectDir, 'user', { hasStoredAuth: true });
+
+      assert.equal(result.path, jsoncPath);
+      assert.match(fs.readFileSync(jsoncPath, 'utf8'), /\/\/ providers live only in the jsonc file/);
+      assert.equal(getStoredProviderConfig('dots3', projectDir)?.settings?.baseURL, 'https://new.example.com/v1');
+      assert.deepEqual(readJson(jsonPath), { ...jsonConfig, disabled_providers: ['other'] });
+
+      assert.equal(removeProviderConfig('dots3', projectDir, 'user'), true);
+      assert.equal(getProviderSources('dots3', projectDir).user.exists, false);
+      assert.deepEqual(readJson(jsonPath), { ...jsonConfig, disabled_providers: ['other'] });
+    } finally {
+      fs.rmSync(jsonPath, { force: true });
+      fs.rmSync(jsoncPath, { force: true });
     }
   });
 });

@@ -79,7 +79,7 @@ const AutoGrowTextarea = React.memo(function AutoGrowTextarea({
                 onKeyDown={onKeyDown}
                 className={cn(
                     'w-full resize-none rounded border border-border/30 bg-background/50 px-2 py-1',
-                    'typography-meta text-foreground placeholder:text-muted-foreground/60',
+                    'typography-meta text-foreground placeholder:text-muted-foreground',
                     'focus:outline-none focus:border-border/60',
                     isScrollable ? 'overflow-y-auto' : 'overflow-y-hidden',
                     disabled ? 'opacity-60' : null,
@@ -243,7 +243,7 @@ return (
                                 <div className="flex items-center gap-2">
                                     <Icon
                                         name="edit"
-                                        className={cn('h-3.5 w-3.5', value.custom ? 'text-primary' : 'text-muted-foreground/50')}
+                                        className={cn('h-3.5 w-3.5', value.custom ? 'text-primary' : 'text-muted-foreground')}
                                     />
                                     <span
                                         className={cn(

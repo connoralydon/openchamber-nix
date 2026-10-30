@@ -1,3 +1,21 @@
+## [2.5.3] - 2026-10-28
+
+### New
+
+- Snippets: rename a snippet, move it between project and global, and preview what it expands to.
+- Appearance: Interface font weight under Density & type, from Regular to Strong.
+- Usage: the OpenCode Go page shows your OpenCode Console budgets.
+
+### Fixes
+
+- Settings/Providers: a custom provider kept in `opencode.jsonc` can be edited (thanks to @yulia-ivashko).
+- Plugins: enable and disable rules in the plugin list no longer show as broken plugins.
+- Chat: reference chips no longer cut off letters.
+
+### Misc
+
+- OpenCode 2.2.0 is now the minimum supported version.
+
 ## [2.5.2] - 2026-10-26
 
 ### New

@@ -7,6 +7,8 @@ export interface MermaidControls {
   download?: boolean;
   copy?: boolean;
   showPanZoomControls?: boolean;
+  /** A header of the surface around the diagram (the full-screen viewer) that takes the controls instead of a row above. */
+  toolbarSlot?: HTMLElement | null;
 }
 
 export interface MarkdownPresentation {

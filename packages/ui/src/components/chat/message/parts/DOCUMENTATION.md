@@ -67,7 +67,7 @@ Use this doc when you ask an agent to change tool/header/description behavior.
   - `lib/turns/liveActivitySummary.ts` derives the report from tool results.
 
 - `ShownToolCard.tsx`
-  - What a call drawn in place of its row shows (`isShownInPlace` in `@/lib/opencode/tools`): the run a completed `workflow.run` call proposed (`proposedWorkflowRunId`, read from the call's result envelope), else the page of an `openchamber_render` call. Both ask something of the user, so both are hoisted to the answer with the turn's pages when Activity is collapsed.
+  - What a call drawn in place of its row shows (`isShownInPlace` in `@/lib/opencode/tools`): the run a completed `workflow.run` call proposed (`proposedWorkflowRunId`, read from the call's result envelope), the images a completed `image.generate` call saved (`generatedImagePaths`, drawn by `GeneratedImages.tsx` through the chat's Markdown media, so they load lazily and open in the gallery; each has a download above it that saves the file itself at full size through the same grant, with `saveFile.ts`, which a shown page's download uses too), else the page of an `openchamber_render` call. The user is meant to see all three, so they are hoisted to the answer with the turn's pages when Activity is collapsed.
   - The workflow card (`components/chat/workflows/WorkflowRunCard.tsx`) reads the run from the server's store, not from the call: the plan with its phases, the run's state, and Run and Don't run while it waits for approval, Stop while it runs, Resume after a failure or stop. The card is current after a reload and on every device; a run the server no longer has says so.
   - The run's report arrives later as a synthetic message (`lib/workflows/report.ts`) and renders as one collapsed line in `TimelineNotice`, like a dispatched session's result, opening a turn of its own.
 
@@ -204,6 +204,11 @@ Code copy/wrap buttons remain visible without hover. File navigation is enabled
 only for settled content with file references enabled; mobile keeps navigation
 while skipping filesystem probes. Selection-ending clicks are consumed without
 opening a file, and platform-specific Cmd/Ctrl clicks retain external opening.
+A `file:` link the click rules do not take as a file, usually a folder, opens
+through the runtime's `files.revealPath` (the system file manager), on the same
+runtimes where the Files tree shows its reveal action: the desktop app. A
+browser client keeps the plain link, since the folder lives on the server's
+machine, and so does VS Code, which mounts no Files tree.
 
 #### Why KaTeX is pinned by an override
 
@@ -525,7 +530,12 @@ the same owner.
   fetched page cannot learn when the user read the message. Documents and
   references retain their explicit inline-image policy. A click on loaded
   assistant media opens the shared attachment preview overlay
-  with every drawn image of the message as its gallery. Copying a selection
+  with every drawn image of the message as its gallery. The viewer's download
+  saves an image's own file: each gallery item may carry `load`, which for a
+  message's local image reads the whole file through its grant with
+  `runtimeFetch` (`loadMessageImageBlob`), never by fetching the asset URL;
+  an item without it saves only from a `data:` or object URL, and a remote
+  image or VS Code offers no download. Copying a selection
   writes `![name](source)` from `data-oc-media-source`, never the authenticated
   asset URL. Incomplete image syntax emits no loading placeholder.
   In server-backed runtimes, the first label of a part to near the viewport

@@ -378,6 +378,53 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ visible, directory, 
         [setTabPreviewUrl]
     );
 
+    // Hosts pass an inline callback; reading it through a ref keeps a parent
+    // re-render from reconnecting the stream that depends on this close.
+    const onLastTabClosedRef = React.useRef(onLastTabClosed);
+    onLastTabClosedRef.current = onLastTabClosed;
+
+    // `processExited` is for a tab whose process is already gone: the tab goes
+    // at once and the server's record is released after. Waiting for that
+    // reply would let an action re-run that reuses the tab meanwhile lose it.
+    const closeTerminalTab = React.useCallback(
+        (directory: string, tabId: string, { processExited = false } = {}) => {
+            if (tabId === activeTabIdRef.current) {
+                disconnectStream();
+            }
+
+            setConnectionError(null);
+            setIsFatalError(false);
+            setIsReconnectPending(false);
+            const tabs = useTerminalStore.getState().getDirectoryState(directory)?.tabs ?? [];
+            const sessionId = tabs.find((tab) => tab.id === tabId)?.terminalSessionId;
+            const isLastTab = tabs.length === 1 && tabs[0]?.id === tabId;
+            // Removing the surface in the same update unmounts this view
+            // before the store's replacement tab could start a shell.
+            const removeTab = () => {
+                if (isLastTab) onLastTabClosedRef.current?.();
+                closeTab(directory, tabId);
+            };
+            if (processExited) {
+                removeTab();
+                if (sessionId) void terminal.close(sessionId, directory).catch(() => undefined);
+                return;
+            }
+            void (async () => {
+                if (sessionId) await terminal.close(sessionId, directory);
+                removeTab();
+            })().catch((error) => setConnectionError(error instanceof Error ? error.message : t('terminalView.error.sessionEnded')));
+        },
+        [closeTab, disconnectStream, t, terminal]
+    );
+
+    // A shell or project action that exits takes its tab with it when the user
+    // chose so. VS Code has no tabs and no such setting, so its terminal keeps
+    // the exited output.
+    const closesOnExit = React.useCallback(
+        () => enableTabs && useUIStore.getState().terminalCloseOnExit,
+        [enableTabs],
+    );
+
     const startStream = React.useCallback(
         (
             directory: string,
@@ -414,7 +461,13 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ visible, directory, 
 
                                 replaceBuffer(directory, tabId, event.data ?? '', event.sequence ?? 0, terminalSnapshotSize(event));
                                 scanTerminalPreviewOutput(directory, tabId, event.data ?? '');
-                                if (event.status === 'exited') setTabLifecycle(directory, tabId, 'exited');
+                                if (event.status === 'exited') {
+                                    if (closesOnExit()) {
+                                        closeTerminalTab(directory, tabId, { processExited: true });
+                                        break;
+                                    }
+                                    setTabLifecycle(directory, tabId, 'exited');
+                                }
                                 break;
                             }
                             case 'reconnecting': {
@@ -432,6 +485,10 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ visible, directory, 
                                 break;
                             }
                             case 'exit': {
+                                if (closesOnExit()) {
+                                    closeTerminalTab(directory, tabId, { processExited: true });
+                                    break;
+                                }
                                 const exitCode =
                                     typeof event.exitCode === 'number' ? event.exitCode : null;
                                 const signal = typeof event.signal === 'number' ? event.signal : null;
@@ -464,6 +521,19 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ visible, directory, 
                         }
                     },
                     onError: (error, fatal) => {
+                        // A stopped action the server had to force-kill ends with
+                        // KILLED and no exit event, and the server has already
+                        // dropped it. The action runner may have cleared the tab's
+                        // session for the same message just before, so ownership
+                        // here accepts that cleared session too.
+                        if (error.code === 'KILLED' && activeTerminalIdRef.current === terminalId && closesOnExit()) {
+                            const killedTab = useTerminalStore.getState().getDirectoryState(directory)?.tabs.find((tab) => tab.id === tabId);
+                            if (killedTab && (killedTab.terminalSessionId === terminalId || killedTab.terminalSessionId === null)) {
+                                setTabSessionId(directory, tabId, null);
+                                closeTerminalTab(directory, tabId, { processExited: true });
+                                return;
+                            }
+                        }
                         if (!ownsStream()) {
                             return;
                         }
@@ -507,6 +577,8 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ visible, directory, 
         [
             appendToBuffer,
             replaceBuffer,
+            closeTerminalTab,
+            closesOnExit,
             disconnectStream,
             focusTerminalWhenWindowActive,
             scanTerminalPreviewOutput,
@@ -834,26 +906,9 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ visible, directory, 
     const handleCloseTab = React.useCallback(
         (tabId: string) => {
             if (!terminalDirectory) return;
-
-            if (tabId === activeTabId) {
-                disconnectStream();
-            }
-
-            setConnectionError(null);
-            setIsFatalError(false);
-            setIsReconnectPending(false);
-            const tabs = useTerminalStore.getState().getDirectoryState(terminalDirectory)?.tabs ?? [];
-            const sessionId = tabs.find((tab) => tab.id === tabId)?.terminalSessionId;
-            const isLastTab = tabs.length === 1 && tabs[0]?.id === tabId;
-            void (async () => {
-                if (sessionId) await terminal.close(sessionId, terminalDirectory);
-                // Removing the surface in the same update unmounts this view
-                // before the store's replacement tab could start a shell.
-                if (isLastTab) onLastTabClosed?.();
-                closeTab(terminalDirectory, tabId);
-            })().catch((error) => setConnectionError(error instanceof Error ? error.message : t('terminalView.error.sessionEnded')));
+            closeTerminalTab(terminalDirectory, tabId);
         },
-        [activeTabId, closeTab, disconnectStream, onLastTabClosed, terminalDirectory, t, terminal]
+        [closeTerminalTab, terminalDirectory]
     );
 
     const handleReorderTab = React.useCallback(

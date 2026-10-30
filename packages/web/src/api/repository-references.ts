@@ -174,7 +174,7 @@ const referencesAcrossResultSchema = z.strictObject({
   total: z.number().int().nonnegative(),
   repositories: z.array(z.union([
     z.strictObject({ directory: z.string().min(1), status: z.literal('included'),
-      repo: z.strictObject({ owner: z.string(), repo: z.string(), url: z.string() }),
+      repo: z.strictObject({ owner: z.string(), repo: z.string(), url: z.string(), host: z.string().optional() }),
     }),
     z.strictObject({ directory: z.string().min(1), status: z.enum(['no-repo', 'disconnected', 'invalid-context', 'error']) }),
   ])),

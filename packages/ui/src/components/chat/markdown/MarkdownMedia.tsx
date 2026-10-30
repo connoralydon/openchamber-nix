@@ -203,7 +203,7 @@ function OwnedImage({
   React.useEffect(() => {
     const element = ref.current;
     if (!owner || !drawn || !element || !gallery) return;
-    return owner.addGallery({ source, filename: name, element, resolve: () => owner.resolve(source, false, true) });
+    return owner.addGallery({ source, filename: name, element, resolve: () => owner.resolve(source, false, true), load: () => owner.load(source) });
   }, [owner, drawn, source, name, ref, gallery]);
 
   const image = url || documentMode ? (

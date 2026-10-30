@@ -287,12 +287,12 @@ export function createProvider({
        * token are this host's alone and come back as `{ status }`: the
        * per-host cooldown answers `unavailable`, a 401 answers `disconnected`.
        */
-      liveSummaries: async ({ session, refs = [], issueRefs = [], discussionRefs = [] }) => {
+      liveSummaries: async ({ session, refs = [], issueRefs = [], discussionRefs = [], details = false }) => {
         const { summaries: { fetchPrSummaries, isGraphqlRateLimitError }, rateLimit } = await modules();
         const host = session.instance;
         if (rateLimit.isGitHubRateLimited(host)) return { status: 'unavailable' };
         try {
-          return await fetchPrSummaries({ octokit: accountOf(session).octokit, refs, issueRefs, discussionRefs });
+          return await fetchPrSummaries({ octokit: accountOf(session).octokit, refs, issueRefs, discussionRefs, details });
         } catch (error) {
           if ((error?.status ?? error?.response?.status) === 401) return { status: 'disconnected' };
           if (isGraphqlRateLimitError(error) || rateLimit.isGitHubRateLimitError(error)) {

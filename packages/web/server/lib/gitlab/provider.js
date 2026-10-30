@@ -718,7 +718,7 @@ export function createProvider({
       readChangeRequestFile: ({ session, directory, number, sourceRepo, remote, path, previousPath, status }) => serviceFor(session)
         .changeRequestFileContents(directory, number, { project: projectSelector(sourceRepo), remote, path, previousPath, status }),
       /** Live state of known merge requests and issues. */
-      liveSummaries: ({ session, refs, issueRefs }) => serviceFor(session, { canonicalReads: false }).liveSummaries({ refs, issueRefs }),
+      liveSummaries: ({ session, refs, issueRefs, details }) => serviceFor(session, { canonicalReads: false }).liveSummaries({ refs, issueRefs, details }),
       /** A merge request's head on the context's primary project network, by number, for a worktree made from it. */
       readChangeRequestHead: async ({ session, directory, remote, number }) => {
         const { changeRequest: request } = await serviceFor(session).changeRequestContext(directory, number, {

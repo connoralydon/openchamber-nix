@@ -13,7 +13,7 @@ describe('tracked item readers', () => {
       provider: 'gitlab', instance: 'https://gitlab.com', accountId: 'acc', pulls: [{ owner: 'g', repo: 'r', number: 3 }], issues: [],
     })).resolves.toEqual({ status: 'ok', pulls: [{ number: 3 }], issues: [{ number: 4 }], discussions: [] });
     expect(readLiveSummaries).toHaveBeenCalledWith({
-      provider: 'gitlab', instance: 'https://gitlab.com', accountId: 'acc', refs: [{ owner: 'g', repo: 'r', number: 3 }], issueRefs: [], discussionRefs: [],
+      provider: 'gitlab', instance: 'https://gitlab.com', accountId: 'acc', refs: [{ owner: 'g', repo: 'r', number: 3 }], issueRefs: [], discussionRefs: [], details: false,
     });
   });
 

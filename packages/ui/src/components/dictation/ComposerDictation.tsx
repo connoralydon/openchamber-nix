@@ -86,8 +86,11 @@ const useModelDownloadProgress = (active: boolean): number | null => {
                     return;
                 }
                 const data = await response.json();
+                // activeModel is the model the server dictates with, which
+                // differs from the saved one when that left the catalog.
+                const modelId = data?.activeModel ?? sttLocalModel;
                 const model = Array.isArray(data?.models)
-                    ? data.models.find((m: { id: string }) => m.id === sttLocalModel)
+                    ? data.models.find((m: { id: string }) => m.id === modelId)
                     : null;
                 if (!cancelled) {
                     setPercent(typeof model?.downloadProgress === 'number' ? model.downloadProgress : null);

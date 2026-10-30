@@ -60,7 +60,7 @@ import {
 import { useDeviceInfo } from '@/lib/device';
 import { FileTypeIcon } from '@/components/icons/FileTypeIcon';
 import { Icon } from "@/components/icon/Icon";
-import { WhitespaceToggleIcon } from './WhitespaceToggleIcon';
+import { ToolbarButton, ToolbarTooltipButton } from '@/components/ui/action-toolbar';
 import { getContextFileOpenFailureMessage, validateContextFileOpen } from '@/lib/contextFileOpenGuard';
 import { toAbsoluteFilePath } from '@/lib/path-utils';
 import { sessionEvents } from '@/lib/sessionEvents';
@@ -1350,28 +1350,20 @@ export const MultiFileDiffEntry = React.memo<MultiFileDiffEntryProps>(({
                     <div className="relative flex shrink-0 items-center justify-self-end gap-2">
                         {formatDiffTotals(file.insertions, file.deletions)}
                         {showOpenInEditorAction && onOpenInEditor ? (
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-5 w-5 p-0 opacity-70 hover:opacity-100"
-                                title={t('diffView.actions.openFileInEditorAtChange')}
+                            <ToolbarTooltipButton
+                                label={t('diffView.actions.openFileInEditorAtChange')}
+                                icon={isOpeningInEditor ? 'loader-4' : 'edit'}
+                                iconClassName={isOpeningInEditor ? 'animate-spin' : undefined}
                                 onClick={(event) => {
                                     event.stopPropagation();
                                     onOpenInEditor(file.path, diffData);
                                 }}
                                 disabled={isOpeningInEditor}
-                            >
-                                {isOpeningInEditor ? (
-                                    <Icon name="loader-4" className="size-3.5 animate-spin" />
-                                ) : (
-                                    <Icon name="edit" className="size-3.5" />
-                                )}
-                            </Button>
+                            />
                         ) : null}
                         <WholeFileCommentButton
                             onClick={wholeFileComment.toggle}
                             active={wholeFileComment.isOpen}
-                            className="opacity-70"
                         />
                         <DiffViewToggle
                             mode={renderSideBySide ? 'side-by-side' : 'unified'}
@@ -1380,12 +1372,12 @@ export const MultiFileDiffEntry = React.memo<MultiFileDiffEntryProps>(({
                                     mode === 'side-by-side' ? 'side-by-side' : 'inline';
                                 setDiffFileLayout(file.path, nextLayout);
                             }}
-                            className="opacity-70"
                         />
                     </div>
                 </div>
+                {wholeFileComment.editor}
             </div>
-            {wholeFileComment.body}
+            {wholeFileComment.cards}
             {isExpanded && (
                 // Clip, not hidden: a hidden overflow is a scroll box of its
                 // own, and the diff's sticky scrollbar would stick to it
@@ -3137,7 +3129,7 @@ export const DiffView: React.FC<DiffViewProps> = ({
             case 'whitespace':
                 return {
                     label: t('diffView.actions.hideWhitespace'),
-                    icon: <WhitespaceToggleIcon hidden={diffHideWhitespace} className="size-4" />,
+                    icon: <Icon name="space" className="size-4" />,
                     on: diffHideWhitespace,
                     select: () => setDiffHideWhitespace(!diffHideWhitespace),
                 };
@@ -3283,56 +3275,42 @@ export const DiffView: React.FC<DiffViewProps> = ({
                     </Button>
                 )}
                 {changedFiles.length > 0 && !isMobileLayout && (
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setDiffFileListMode(diffFileListMode === 'tree' ? 'flat' : 'tree')}
-                        aria-pressed={diffFileListMode === 'tree'}
-                        className={cn(
-                            'diff-toolbar__tree-toggle h-5 w-5 flex-shrink-0 p-0 transition-opacity',
-                            diffFileListMode === 'tree' ? 'text-foreground opacity-100' : 'text-muted-foreground opacity-60 hover:opacity-100'
-                        )}
-                        title={diffFileListMode === 'tree' ? t('diffView.fileTree.showAsList') : t('diffView.fileTree.showAsTree')}
-                    >
-                        <Icon name="node-tree" className="size-4" />
-                    </Button>
+                    <span className="diff-toolbar__tree-toggle flex flex-shrink-0">
+                        <ToolbarTooltipButton
+                            label={t('diffView.fileTree.showAsTree')}
+                            icon="node-tree"
+                            pressed={diffFileListMode === 'tree'}
+                            onClick={() => setDiffFileListMode(diffFileListMode === 'tree' ? 'flat' : 'tree')}
+                        />
+                    </span>
                 )}
                 {changedFiles.length > 0 && (
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setDiffWrapLines(!diffWrapLinesStore)}
-                        className={cn(
-                            'diff-toolbar__wrap-toggle h-5 w-5 flex-shrink-0 p-0 transition-opacity',
-                            diffWrapLines ? 'text-foreground opacity-100' : 'text-muted-foreground opacity-60 hover:opacity-100'
-                        )}
-                        title={diffWrapLines ? t('diffView.actions.disableLineWrap') : t('diffView.actions.enableLineWrap')}
-                    >
-                        <Icon name="text-wrap" className="size-4" />
-                    </Button>
+                    <span className="diff-toolbar__wrap-toggle flex flex-shrink-0">
+                        <ToolbarTooltipButton
+                            label={t('diffView.actions.wrapLines')}
+                            icon="text-wrap"
+                            pressed={diffWrapLines}
+                            onClick={() => setDiffWrapLines(!diffWrapLinesStore)}
+                        />
+                    </span>
                 )}
                 {changedFiles.length > 0 && (
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setDiffHideWhitespace(!diffHideWhitespace)}
-                        aria-pressed={diffHideWhitespace}
-                        className={cn(
-                            'diff-toolbar__whitespace-toggle h-5 w-5 flex-shrink-0 p-0 transition-opacity',
-                            diffHideWhitespace ? 'text-foreground opacity-100' : 'text-muted-foreground opacity-60 hover:opacity-100'
-                        )}
-                        title={diffHideWhitespace ? t('diffView.whitespace.hidden') : t('diffView.whitespace.shown')}
-                        aria-label={t('diffView.actions.hideWhitespace')}
-                    >
-                        <WhitespaceToggleIcon hidden={diffHideWhitespace} className="size-4" />
-                    </Button>
+                    <span className="diff-toolbar__whitespace-toggle flex flex-shrink-0">
+                        <ToolbarTooltipButton
+                            label={t('diffView.actions.hideWhitespace')}
+                            icon="space"
+                            pressed={diffHideWhitespace}
+                            onClick={() => setDiffHideWhitespace(!diffHideWhitespace)}
+                        />
+                    </span>
                 )}
                 {currentLayoutForAllFiles && (
-                    <DiffViewToggle
-                        mode={currentLayoutForAllFiles === 'side-by-side' ? 'side-by-side' : 'unified'}
-                        onModeChange={handleHeaderLayoutChange}
-                        className="diff-toolbar__layout-toggle flex-shrink-0"
-                    />
+                    <span className="diff-toolbar__layout-toggle flex flex-shrink-0">
+                        <DiffViewToggle
+                            mode={currentLayoutForAllFiles === 'side-by-side' ? 'side-by-side' : 'unified'}
+                            onModeChange={handleHeaderLayoutChange}
+                        />
+                    </span>
                 )}
                 {changedFiles.length > 0 && (
                     <DropdownMenu onOpenChange={handleToolbarMenuOpenChange}>
@@ -3340,14 +3318,7 @@ export const DiffView: React.FC<DiffViewProps> = ({
                             <TooltipTrigger asChild>
                                 <span className="diff-toolbar__more flex-shrink-0">
                                     <DropdownMenuTrigger asChild>
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            className="size-6 p-0 text-foreground hover:bg-transparent focus-visible:bg-transparent active:bg-transparent"
-                                            aria-label={t('diffView.actions.moreActions')}
-                                        >
-                                            <Icon name="more" className="size-4" />
-                                        </Button>
+                                        <ToolbarButton label={t('diffView.actions.moreActions')} icon="more" />
                                     </DropdownMenuTrigger>
                                 </span>
                             </TooltipTrigger>

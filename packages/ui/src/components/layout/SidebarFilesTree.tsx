@@ -32,7 +32,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { GitignoredToggleButton } from './GitignoredToggleButton';
+import { ActionToolbar } from '@/components/ui/action-toolbar';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
@@ -53,7 +53,7 @@ import { FileContentSearchResults } from '@/components/views/files/FileContentSe
 import { fileContentMatchKey, useFileContentSearch } from '@/components/views/files/useFileContentSearch';
 import type { FileContentSearchMatch } from '@/lib/api/types';
 import { useDirectoryShowHidden } from '@/lib/directoryShowHidden';
-import { useFilesViewShowGitignored } from '@/lib/filesViewShowGitignored';
+import { setFilesViewShowGitignored, useFilesViewShowGitignored } from '@/lib/filesViewShowGitignored';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { cn, getRevealLabelKey } from '@/lib/utils';
 import { opencodeClient } from '@/lib/opencode/client';
@@ -374,7 +374,7 @@ const FileRow: React.FC<FileRowProps> = ({
           toast.error(t('sidebarFilesTree.toast.copyFailed'));
         });
       }}>
-        <Icon name="file-copy" className="me-2 h-4 w-4" /> {t('sidebarFilesTree.menu.copyPath')}
+        <Icon name="link" className="me-2 h-4 w-4" /> {t('sidebarFilesTree.menu.copyPath')}
       </Item>
       {!isDir && downloadFile && (
         <Item onClick={(e: React.MouseEvent) => {
@@ -1601,77 +1601,61 @@ const SidebarFilesTreeContent: React.FC<{ visible: boolean; currentDirectory: st
       {/* The action band matches the file editor's docked toolbar (40px,
           24px buttons) so the two read as one row across the panel. */}
       <div className="flex flex-col border-b border-border/40">
-        <div className="flex h-8 shrink-0 items-center justify-end gap-1 border-t border-border/40 px-2">
+        <div className="flex h-8 shrink-0 items-center border-t border-border/40 px-2">
         {/* New file, new folder and upload share one "+" menu, so the band
             keeps four buttons and fits even the narrowest tree. */}
-        {canCreateFile || canCreateFolder || canUpload ? (
-          <DropdownMenu>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="inline-flex flex-shrink-0">
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="size-6 p-0 flex-shrink-0"
-                      aria-label={t('sidebarFilesTree.actions.addMenuTitle')}
-                    >
-                      <Icon name={isUploading ? 'loader-4' : 'add'} className={cn('h-4 w-4', isUploading && 'animate-spin')} />
-                    </Button>
-                  </DropdownMenuTrigger>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" sideOffset={6}>{t('sidebarFilesTree.actions.addMenuTitle')}</TooltipContent>
-            </Tooltip>
-            <DropdownMenuContent align="end" className="min-w-[180px]">
-              {canCreateFile ? (
-                <DropdownMenuItem onClick={() => handleOpenDialog('createFile', { path: currentDirectory, type: 'directory' })}>
-                  <Icon name="file-add" className="me-2 h-4 w-4" /> {t('sidebarFilesTree.menu.newFile')}
-                </DropdownMenuItem>
-              ) : null}
-              {canCreateFolder ? (
-                <DropdownMenuItem onClick={() => handleOpenDialog('createFolder', { path: currentDirectory, type: 'directory' })}>
-                  <Icon name="folder-add" className="me-2 h-4 w-4" /> {t('sidebarFilesTree.menu.newFolder')}
-                </DropdownMenuItem>
-              ) : null}
-              {canUpload ? (
-                <DropdownMenuItem disabled={!root || isUploading} onClick={() => pickFiles(root)}>
-                  <Icon name="upload-2" className="me-2 h-4 w-4" /> {t('sidebarFilesTree.menu.uploadFiles')}
-                </DropdownMenuItem>
-              ) : null}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        ) : null}
-        <GitignoredToggleButton className="size-6" />
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="inline-flex flex-shrink-0">
-              <Button variant="ghost" size="sm" onClick={() => void refreshRoot()} className="size-6 p-0 flex-shrink-0" title={t('sidebarFilesTree.actions.refreshTitle')} aria-label={t('sidebarFilesTree.actions.refreshTitle')}>
-                <Icon name="refresh" className="h-4 w-4" />
-              </Button>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" sideOffset={6}>{t('sidebarFilesTree.actions.refreshTitle')}</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="inline-flex flex-shrink-0">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  if (root) collapseAllExpandedPaths(root);
-                }}
-                className="size-6 p-0 flex-shrink-0"
-                title={t('sidebarFilesTree.actions.collapseAllTitle')}
-                aria-label={t('sidebarFilesTree.actions.collapseAllTitle')}
-              >
-                <Icon name="collapse-vertical" className="h-4 w-4" />
-              </Button>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" sideOffset={6}>{t('sidebarFilesTree.actions.collapseAllTitle')}</TooltipContent>
-        </Tooltip>
+        <ActionToolbar
+          className="flex-1"
+          start={null}
+          groups={[[
+            (canCreateFile || canCreateFolder || canUpload) && {
+              id: 'add',
+              label: t('sidebarFilesTree.actions.addMenuTitle'),
+              icon: isUploading ? 'loader-4' : 'add',
+              iconClassName: isUploading ? 'animate-spin' : undefined,
+              menu: (
+                <>
+                  {canCreateFile ? (
+                    <DropdownMenuItem onClick={() => handleOpenDialog('createFile', { path: currentDirectory, type: 'directory' })}>
+                      <Icon name="file-add" className="me-2 h-4 w-4" /> {t('sidebarFilesTree.menu.newFile')}
+                    </DropdownMenuItem>
+                  ) : null}
+                  {canCreateFolder ? (
+                    <DropdownMenuItem onClick={() => handleOpenDialog('createFolder', { path: currentDirectory, type: 'directory' })}>
+                      <Icon name="folder-add" className="me-2 h-4 w-4" /> {t('sidebarFilesTree.menu.newFolder')}
+                    </DropdownMenuItem>
+                  ) : null}
+                  {canUpload ? (
+                    <DropdownMenuItem disabled={!root || isUploading} onClick={() => pickFiles(root)}>
+                      <Icon name="upload-2" className="me-2 h-4 w-4" /> {t('sidebarFilesTree.menu.uploadFiles')}
+                    </DropdownMenuItem>
+                  ) : null}
+                </>
+              ),
+            },
+            {
+              id: 'gitignored',
+              label: t('filesView.tree.actions.showGitignored'),
+              icon: 'file-forbid',
+              pressed: showGitignored,
+              onSelect: () => setFilesViewShowGitignored(!showGitignored),
+            },
+            {
+              id: 'refresh',
+              label: t('sidebarFilesTree.actions.refreshTitle'),
+              icon: 'refresh',
+              onSelect: () => void refreshRoot(),
+            },
+            {
+              id: 'collapse-all',
+              label: t('sidebarFilesTree.actions.collapseAllTitle'),
+              icon: 'collapse-vertical',
+              onSelect: () => {
+                if (root) collapseAllExpandedPaths(root);
+              },
+            },
+          ]]}
+        />
         </div>
         <div className="relative min-w-0 px-2 py-2">
           {canSearchContents ? (

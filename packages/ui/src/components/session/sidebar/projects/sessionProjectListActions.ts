@@ -36,18 +36,19 @@ export const toggleActivityZone = (
   });
 };
 
-/** Show more or Show fewer under a zone or a group. */
+/** Show more, or Show less back to the first batch, under a zone or a group. */
 export const applyShowControl = (
   row: Extract<SessionSidebarRow, { kind: 'show-control' }>,
+  control: 'more' | 'fewer',
   { model, actions }: Pick<SessionProjectListProps, 'model' | 'actions'>,
 ): void => {
   if (row.containerKey.startsWith('activity:')) {
     model.state.setVisibleActivityCountByKey((current) => {
       const next = new Map(current);
-      if (row.control === 'more') next.set(row.containerKey, row.currentCount + row.increment); else next.delete(row.containerKey);
+      if (control === 'more') next.set(row.containerKey, row.currentCount + row.increment); else next.delete(row.containerKey);
       return next;
     });
-  } else if (row.control === 'more') actions.group.showMoreGroupSessions(row.containerKey, row.currentCount, row.increment);
+  } else if (control === 'more') actions.group.showMoreGroupSessions(row.containerKey, row.currentCount, row.increment);
   else actions.group.resetGroupSessionLimit(row.containerKey);
 };
 
