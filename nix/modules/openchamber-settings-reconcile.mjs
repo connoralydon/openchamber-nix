@@ -4,6 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 const HEALTH_ATTEMPTS = 240;
 const HEALTH_INTERVAL_MS = 500;
 const REQUEST_TIMEOUT_MS = 5_000;
+const SETTINGS_SURFACES = ['web', 'desktop', 'vscode', 'mobile'];
 
 const sleep = (duration) => new Promise((resolve) => setTimeout(resolve, duration));
 
@@ -100,10 +101,11 @@ const sessionCookie = async (fetchImpl, baseUrl, password) => {
   return cookie;
 };
 
-const settingsRequest = async (fetchImpl, baseUrl, cookie, options = {}) => {
+const settingsRequest = async (fetchImpl, baseUrl, cookie, { surface = null, ...options } = {}) => {
   const headers = { ...options.headers };
   if (cookie) headers.Cookie = cookie;
-  return requestJson(fetchImpl, `${baseUrl}/api/config/settings`, {
+  const query = surface ? `?surface=${encodeURIComponent(surface)}` : '';
+  return requestJson(fetchImpl, `${baseUrl}/api/config/settings${query}`, {
     ...options,
     headers,
   });
@@ -141,6 +143,7 @@ const reconcileSttApiKey = async (fetchImpl, baseUrl, cookie, sttApiKey, log) =>
 export const reconcileSettings = async ({
   baseUrl,
   desiredSettings,
+  desiredSettingsBySurface = {},
   password = null,
   sttApiKey = null,
   settingsFilePath,
@@ -149,6 +152,17 @@ export const reconcileSettings = async ({
   sleepImpl = sleep,
   log = console.log,
 }) => {
+  if (!isJsonObject(desiredSettings) || !isJsonObject(desiredSettingsBySurface)) {
+    throw new Error('Managed settings and settingsBySurface must be JSON objects');
+  }
+  const targets = [{ surface: null, desired: desiredSettings }];
+  for (const [surface, desired] of Object.entries(desiredSettingsBySurface)) {
+    if (!SETTINGS_SURFACES.includes(surface) || !isJsonObject(desired)) {
+      throw new Error(`Invalid managed settings profile: ${surface}`);
+    }
+    if (Object.keys(desired).length > 0) targets.push({ surface, desired });
+  }
+  const keyNames = (surface, keys) => keys.map((key) => surface ? `${surface}.${key}` : key);
   const transcriptionKey = sttApiKey === null ? null : sttApiKey.trim();
   if (transcriptionKey !== null && (
     !transcriptionKey || transcriptionKey.length > 1024 || /[\r\n]/.test(transcriptionKey)
@@ -158,54 +172,55 @@ export const reconcileSettings = async ({
   await waitUntilReady(fetchImpl, baseUrl, sleepImpl);
   await validatePersistedSettings(settingsFilePath, readFileImpl);
 
-  const cookie = await sessionCookie(fetchImpl, baseUrl, password);
-  const { body: current } = await settingsRequest(fetchImpl, baseUrl, cookie);
-  const changedKeys = mismatchedKeys(desiredSettings, current);
-  if (changedKeys.length === 0) {
-    await reconcileSttApiKey(fetchImpl, baseUrl, cookie, transcriptionKey, log);
-    log('[settings-reconcile] Managed settings already match');
-    return { changedKeys, restarted: false };
+  let cookie = await sessionCookie(fetchImpl, baseUrl, password);
+  const changedKeys = [];
+  const staleKeys = [];
+  for (const { surface, desired } of targets) {
+    const { body: current } = await settingsRequest(fetchImpl, baseUrl, cookie, { surface });
+    const changed = mismatchedKeys(desired, current);
+    if (changed.length === 0) continue;
+    const { body: updated } = await settingsRequest(fetchImpl, baseUrl, cookie, {
+      surface,
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(valuesForKeys(desired, changed)),
+    });
+    const rejected = keyNames(surface, mismatchedKeys(desired, updated));
+    if (rejected.length > 0) {
+      throw new Error(`OpenChamber rejected or normalized managed settings: ${rejected.join(', ')}`);
+    }
+    changedKeys.push(...keyNames(surface, changed));
+    const { body: verified } = await settingsRequest(fetchImpl, baseUrl, cookie, { surface });
+    staleKeys.push(...keyNames(surface, mismatchedKeys(desired, verified)));
   }
 
-  const changes = valuesForKeys(desiredSettings, changedKeys);
-  const { body: updated } = await settingsRequest(fetchImpl, baseUrl, cookie, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(changes),
-  });
-  const rejectedKeys = mismatchedKeys(desiredSettings, updated);
-  if (rejectedKeys.length > 0) {
-    throw new Error(`OpenChamber rejected or normalized managed settings: ${rejectedKeys.join(', ')}`);
+  const restarted = staleKeys.length > 0;
+  if (restarted) {
+    log(`[settings-reconcile] Restarting OpenChamber after stale settings: ${staleKeys.join(', ')}`);
+    const { body: shutdown } = await requestJson(fetchImpl, `${baseUrl}/api/system/shutdown`, {
+      method: 'POST',
+      headers: cookie ? { Cookie: cookie } : {},
+    });
+    if (shutdown.ok !== true) {
+      throw new Error('OpenChamber refused the restart request');
+    }
+
+    await waitForRestart(fetchImpl, baseUrl, sleepImpl);
+    cookie = await sessionCookie(fetchImpl, baseUrl, password);
+    for (const { surface, desired } of targets) {
+      const { body: verified } = await settingsRequest(fetchImpl, baseUrl, cookie, { surface });
+      const remaining = keyNames(surface, mismatchedKeys(desired, verified));
+      if (remaining.length > 0) {
+        throw new Error(`Managed settings still differ after restart: ${remaining.join(', ')}`);
+      }
+    }
   }
 
-  const { body: verified } = await settingsRequest(fetchImpl, baseUrl, cookie);
-  const staleKeys = mismatchedKeys(desiredSettings, verified);
-  if (staleKeys.length === 0) {
-    await reconcileSttApiKey(fetchImpl, baseUrl, cookie, transcriptionKey, log);
-    log(`[settings-reconcile] Updated settings: ${changedKeys.join(', ')}`);
-    return { changedKeys, restarted: false };
-  }
-
-  log(`[settings-reconcile] Restarting OpenChamber after stale settings: ${staleKeys.join(', ')}`);
-  const { body: shutdown } = await requestJson(fetchImpl, `${baseUrl}/api/system/shutdown`, {
-    method: 'POST',
-    headers: cookie ? { Cookie: cookie } : {},
-  });
-  if (shutdown.ok !== true) {
-    throw new Error('OpenChamber refused the restart request');
-  }
-
-  await waitForRestart(fetchImpl, baseUrl, sleepImpl);
-  const restartedCookie = await sessionCookie(fetchImpl, baseUrl, password);
-  const { body: restartedSettings } = await settingsRequest(fetchImpl, baseUrl, restartedCookie);
-  const remainingKeys = mismatchedKeys(desiredSettings, restartedSettings);
-  if (remainingKeys.length > 0) {
-    throw new Error(`Managed settings still differ after restart: ${remainingKeys.join(', ')}`);
-  }
-
-  await reconcileSttApiKey(fetchImpl, baseUrl, restartedCookie, transcriptionKey, log);
-  log(`[settings-reconcile] Updated settings after restart: ${changedKeys.join(', ')}`);
-  return { changedKeys, restarted: true };
+  await reconcileSttApiKey(fetchImpl, baseUrl, cookie, transcriptionKey, log);
+  log(changedKeys.length === 0
+    ? '[settings-reconcile] Managed settings already match'
+    : `[settings-reconcile] Updated settings${restarted ? ' after restart' : ''}: ${changedKeys.join(', ')}`);
+  return { changedKeys, restarted };
 };
 
 export const readCredential = async (name, {
@@ -230,14 +245,16 @@ export const readCredential = async (name, {
 const main = async () => {
   const baseUrl = process.env.OPENCHAMBER_RECONCILE_BASE_URL;
   const desiredSettingsFile = process.env.OPENCHAMBER_RECONCILE_DESIRED_SETTINGS_FILE;
+  const desiredSurfaceSettingsFile = process.env.OPENCHAMBER_RECONCILE_DESIRED_SURFACE_SETTINGS_FILE;
   const settingsFilePath = process.env.OPENCHAMBER_RECONCILE_SETTINGS_FILE;
-  if (!baseUrl || !desiredSettingsFile || !settingsFilePath) {
+  if (!baseUrl || !desiredSettingsFile || !desiredSurfaceSettingsFile || !settingsFilePath) {
     throw new Error('OpenChamber settings reconciliation environment is incomplete');
   }
 
   await reconcileSettings({
     baseUrl,
     desiredSettings: await readJsonObject(desiredSettingsFile),
+    desiredSettingsBySurface: await readJsonObject(desiredSurfaceSettingsFile),
     password: await readCredential('ui-password'),
     sttApiKey: process.env.OPENCHAMBER_RECONCILE_STT_API_KEY === 'true'
       ? await readCredential('stt-api-key', { required: true }) : null,

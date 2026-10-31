@@ -407,3 +407,152 @@ test('missing or unreadable credentials fail without exposing underlying errors'
     }), /Cannot read OpenChamber credential: stt-api-key/);
   }
 });
+
+test('reconciles saved surface overrides without changing unmanaged values, then does no writes', async () => {
+  const common = { openTrackerLinksOnBoard: true, sidebarGrouping: 'time', untouched: 'common' };
+  const profiles = {
+    web: { sidebarGrouping: 'time', untouched: 'web' },
+    mobile: { sidebarGrouping: 'time', sidebarDetailedZoneRows: false, untouched: 'mobile' },
+    desktop: { sidebarGrouping: 'time', untouched: 'desktop' },
+  };
+  const writes = [];
+  const fetchImpl = async (url, options = {}) => {
+    const { pathname, searchParams } = new URL(url);
+    if (pathname === '/health') return jsonResponse(readyHealth);
+    assert.equal(pathname, '/api/config/settings');
+    const surface = searchParams.get('surface');
+    const target = surface ? profiles[surface] : common;
+    if (options.method === 'PUT') {
+      const changes = JSON.parse(options.body);
+      writes.push({ surface, changes });
+      Object.assign(target, changes);
+    }
+    return jsonResponse(surface ? { ...common, ...target } : common);
+  };
+  const options = {
+    baseUrl: 'http://127.0.0.1:3000',
+    desiredSettings: { openTrackerLinksOnBoard: false },
+    desiredSettingsBySurface: {
+      web: { sidebarGrouping: 'project' },
+      mobile: { sidebarGrouping: 'project', sidebarDetailedZoneRows: true },
+    },
+    settingsFilePath: '/state/settings.json',
+    fetchImpl,
+    readFileImpl: persistedSettings,
+    sleepImpl: noSleep,
+    log: () => {},
+  };
+
+  assert.deepEqual(await reconcileSettings(options), {
+    changedKeys: ['openTrackerLinksOnBoard', 'web.sidebarGrouping', 'mobile.sidebarGrouping', 'mobile.sidebarDetailedZoneRows'],
+    restarted: false,
+  });
+  assert.deepEqual(writes, [
+    { surface: null, changes: { openTrackerLinksOnBoard: false } },
+    { surface: 'web', changes: { sidebarGrouping: 'project' } },
+    { surface: 'mobile', changes: { sidebarGrouping: 'project', sidebarDetailedZoneRows: true } },
+  ]);
+  assert.equal(common.sidebarGrouping, 'time');
+  assert.equal(common.untouched, 'common');
+  assert.equal(profiles.web.untouched, 'web');
+  assert.equal(profiles.mobile.untouched, 'mobile');
+  assert.deepEqual(profiles.desktop, { sidebarGrouping: 'time', untouched: 'desktop' });
+
+  assert.deepEqual(await reconcileSettings(options), { changedKeys: [], restarted: false });
+  assert.equal(writes.length, 3);
+});
+
+test('restarts at most once for stale settings in multiple surface profiles', async () => {
+  let shutdowns = 0;
+  let restartHealthReads = 0;
+  const written = new Map();
+  const fetchImpl = async (url, options = {}) => {
+    const { pathname, searchParams } = new URL(url);
+    if (pathname === '/health') {
+      if (shutdowns > 0 && restartHealthReads++ === 0) throw new Error('connection refused');
+      return jsonResponse(readyHealth);
+    }
+    if (pathname === '/api/system/shutdown') {
+      shutdowns += 1;
+      return jsonResponse({ ok: true });
+    }
+    assert.equal(pathname, '/api/config/settings');
+    const surface = searchParams.get('surface');
+    if (!surface) return jsonResponse({});
+    if (options.method === 'PUT') {
+      const changes = JSON.parse(options.body);
+      written.set(surface, changes);
+      return jsonResponse(changes);
+    }
+    return jsonResponse(shutdowns ? written.get(surface) : { sidebarDetailedZoneRows: false });
+  };
+
+  const result = await reconcileSettings({
+    baseUrl: 'http://127.0.0.1:3000',
+    desiredSettings: {},
+    desiredSettingsBySurface: {
+      web: { sidebarDetailedZoneRows: true },
+      mobile: { sidebarDetailedZoneRows: true },
+    },
+    settingsFilePath: '/state/settings.json',
+    fetchImpl,
+    readFileImpl: persistedSettings,
+    sleepImpl: noSleep,
+    log: () => {},
+  });
+  assert.deepEqual(result, {
+    changedKeys: ['web.sidebarDetailedZoneRows', 'mobile.sidebarDetailedZoneRows'],
+    restarted: true,
+  });
+  assert.equal(shutdowns, 1);
+  assert.equal(written.size, 2);
+});
+
+test('reports a rejected surface setting without restarting or writing the voice key', async () => {
+  await assert.rejects(reconcileSettings({
+    baseUrl: 'http://127.0.0.1:3000',
+    desiredSettings: {},
+    desiredSettingsBySurface: { mobile: { sidebarDetailedZoneRows: true } },
+    sttApiKey: 'test-only-key',
+    settingsFilePath: '/state/settings.json',
+    fetchImpl: async (url) => {
+      const { pathname } = new URL(url);
+      if (pathname === '/health') return jsonResponse(readyHealth);
+      assert.equal(pathname, '/api/config/settings');
+      return jsonResponse({ sidebarDetailedZoneRows: false });
+    },
+    readFileImpl: persistedSettings,
+    sleepImpl: noSleep,
+    log: () => {},
+  }), /rejected or normalized managed settings: mobile.sidebarDetailedZoneRows/);
+});
+
+test('does not write when a surface settings read fails', async () => {
+  await assert.rejects(reconcileSettings({
+    baseUrl: 'http://127.0.0.1:3000',
+    desiredSettings: {},
+    desiredSettingsBySurface: { mobile: { sidebarDetailedZoneRows: true } },
+    settingsFilePath: '/state/settings.json',
+    fetchImpl: async (url, options = {}) => {
+      assert.notEqual(options.method, 'PUT');
+      const { pathname, searchParams } = new URL(url);
+      if (pathname === '/health') return jsonResponse(readyHealth);
+      assert.equal(pathname, '/api/config/settings');
+      return searchParams.has('surface') ? jsonResponse({}, { status: 500 }) : jsonResponse({});
+    },
+    readFileImpl: persistedSettings,
+    sleepImpl: noSleep,
+    log: () => {},
+  }), /returned HTTP 500/);
+});
+
+for (const desiredSettingsBySurface of [{ phone: {} }, { mobile: [] }, null]) {
+  test('rejects invalid surface configuration before any request', async () => {
+    await assert.rejects(reconcileSettings({
+      baseUrl: 'http://127.0.0.1:3000',
+      desiredSettings: {},
+      desiredSettingsBySurface,
+      fetchImpl: async () => assert.fail('must not request settings'),
+    }), /Invalid managed settings profile|must be JSON objects/);
+  });
+}

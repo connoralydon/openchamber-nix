@@ -167,6 +167,19 @@ describe('per-surface keys', () => {
     assert.equal(flattenPreferences(parsed.fields, 'mobile')[perSurfaceKey], undefined);
   });
 
+  test('keeps surface-only entries that the current profile or base cannot see', () => {
+    const mobile = buildPreferencesFields({}, { fontSize: 17 }, 1, { surface: 'mobile', changedKeys: ['fontSize'] });
+    const vscode = buildPreferencesFields(mobile, { sidebarGrouping: 'project' }, 2, {
+      surface: 'vscode', changedKeys: ['sidebarGrouping'],
+    });
+    const shared = buildPreferencesFields(vscode, { showReasoningTraces: false }, 3, { changedKeys: ['showReasoningTraces'] });
+    assert.equal(flattenPreferences(shared, 'mobile').fontSize, 17);
+    assert.equal(flattenPreferences(shared, 'vscode').sidebarGrouping, 'project');
+    assert.deepEqual(flattenPreferences(shared), { showReasoningTraces: false });
+    assert.deepEqual(shared.fontSize, mobile.fontSize);
+    assert.deepEqual(shared.sidebarGrouping, vscode.sidebarGrouping);
+  });
+
   test('rejects an unknown surface in the file', () => {
     const result = parsePreferencesDocument(JSON.stringify({ version: 1, fields: { x: { surfaces: { toaster: { value: 1 } } } } }));
     assert.equal(result.ok, false);

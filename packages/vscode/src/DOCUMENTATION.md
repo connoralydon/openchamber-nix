@@ -122,6 +122,7 @@ The webview build emits each worker as one self-contained file. VS Code webviews
   - An existing but unparseable `preferences.json` is a failure, not an empty profile: it is never seeded over or rewritten, one warning is logged per process, reads return `settings.json` only, and writes drop the profile part until a later read succeeds.
   - Both files are written atomically (tmp file + rename). Write failures throw, so `persistSettings` rejects and the webview sees the save fail instead of a silent success.
   - The extension host is always the `vscode` surface kind: per-surface profile keys it changes land under `surfaces.vscode` in `preferences.json` and reads resolve `vscode` first, base otherwise (mirrors the server's header-driven behaviour).
+  - A per-client entry absent from the VS Code view because it has no base or VS Code value remains unchanged during writes. This preserves preferences that only another client has saved, matching the server writer.
 
 - `bridge-system-runtime.ts`
   - System/editor/provider/quota/notification/update-check message handlers.

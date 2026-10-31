@@ -64,6 +64,8 @@ test('runtime credentials reach the saved key and the real transcription route',
   await writeFile(desiredSettingsFile, JSON.stringify({
     sttProvider: 'openai-compatible', sttServerUrl: providerUrl, sttModel: 'test-only-model',
   }));
+  const desiredSurfaceSettingsFile = path.join(directory, 'desired-surfaces.json');
+  await writeFile(desiredSurfaceSettingsFile, '{}');
   await writeFile(path.join(directory, 'ui-password'), 'test-only-password\n', { mode: 0o600 });
 
   for (const key of ['test-only-first', 'test-only-rotated']) {
@@ -77,6 +79,7 @@ test('runtime credentials reach the saved key and the real transcription route',
         CREDENTIALS_DIRECTORY: directory,
         OPENCHAMBER_RECONCILE_BASE_URL: baseUrl,
         OPENCHAMBER_RECONCILE_DESIRED_SETTINGS_FILE: desiredSettingsFile,
+        OPENCHAMBER_RECONCILE_DESIRED_SURFACE_SETTINGS_FILE: desiredSurfaceSettingsFile,
         OPENCHAMBER_RECONCILE_SETTINGS_FILE: path.join(directory, 'settings.json'),
         OPENCHAMBER_RECONCILE_STT_API_KEY: 'true',
       },

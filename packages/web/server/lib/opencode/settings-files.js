@@ -115,7 +115,7 @@ export const flattenPreferences = (fields, surface = null) => {
  * The next preference fields for a merged document: every profile key it
  * carries, stamped `now` when its value differs from what the file held and
  * keeping the earlier stamp otherwise. Profile keys the document no longer
- * carries are dropped (that is how a cleared key leaves the file).
+ * carries are dropped, except entries that this surface cannot see at all.
  *
  * Per-surface keys: when the write comes from a surface kind (`surface`) and
  * the key is among the keys that write changed (`changedKeys`), the value goes
@@ -127,6 +127,13 @@ export const flattenPreferences = (fields, surface = null) => {
 export const buildPreferencesFields = (previousFields, document, now, { surface = null, changedKeys = null } = {}) => {
   const fields = {};
   const changed = changedKeys ? new Set(changedKeys) : null;
+  // An entry with no base and no value for this surface is absent from its
+  // resolved document. Its absence must not delete another surface's choice.
+  for (const [key, previous] of Object.entries(previousFields)) {
+    if (isPerSurfaceSettingsKey(key) && !('value' in previous) && !previous.surfaces?.[surface]) {
+      fields[key] = previous;
+    }
+  }
   for (const [key, value] of Object.entries(document)) {
     if (value === undefined || !isProfileSettingsKey(key)) continue;
     const previous = previousFields[key];

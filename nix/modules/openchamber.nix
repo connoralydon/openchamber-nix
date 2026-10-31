@@ -10,8 +10,19 @@ let
   jsonFormat = pkgs.formats.json { };
 
   openchamberPackage = pkgs.callPackage ../packages/openchamber-web.nix { };
-  settingsEnabled = cfg.settings != { } || cfg.sttApiKeyFile != null;
+  settingsRegistry = builtins.fromJSON (
+    builtins.readFile ../../packages/web/server/lib/opencode/settings-registry.json
+  );
+  settingsSurfaces = [
+    "web"
+    "desktop"
+    "vscode"
+    "mobile"
+  ];
+  surfaceSettings = lib.filterAttrs (_: settings: settings != { }) cfg.settingsBySurface;
+  settingsEnabled = cfg.settings != { } || surfaceSettings != { } || cfg.sttApiKeyFile != null;
   desiredSettingsFile = jsonFormat.generate "openchamber-managed-settings.json" cfg.settings;
+  desiredSurfaceSettingsFile = jsonFormat.generate "openchamber-managed-surface-settings.json" surfaceSettings;
 
   isLoopbackHost =
     host:
@@ -174,6 +185,35 @@ in
         OpenChamber settings to enforce through the settings API. OpenChamber
         owns fields that are not present in this attribute set. Values are
         written to the Nix store and must not contain secrets.
+        Saved per-client preferences take precedence over common values;
+        use settingsBySurface to manage those preferences explicitly.
+      '';
+    };
+
+    settingsBySurface = lib.mkOption {
+      type = lib.types.submodule {
+        options = lib.genAttrs settingsSurfaces (
+          surface:
+          lib.mkOption {
+            type = lib.types.attrsOf jsonFormat.type;
+            default = { };
+            description = "Per-client OpenChamber preferences to enforce for ${surface}.";
+          }
+        );
+      };
+      default = { };
+      example.mobile = {
+        sidebarGrouping = "project";
+        sidebarKeepWorkInPlace = true;
+        sidebarDetailedZoneRows = true;
+      };
+      description = ''
+        Preferences to enforce separately for web, desktop, vscode, or mobile
+        clients. Only settings marked perSurface by OpenChamber are accepted.
+        The mobile app and hosted mobile website share the mobile profile.
+        Unlisted settings and profiles remain unmanaged. Removing a value stops
+        management but leaves its saved value in place. Values enter the Nix
+        store and must not contain secrets.
       '';
     };
 
@@ -182,8 +222,8 @@ in
       default = null;
       example = "2d";
       description = ''
-        How often to reconcile services.openchamber.settings and sttApiKeyFile.
-        Both are reconciled once during system startup. Set this to null to
+        How often to reconcile settings, settingsBySurface, and sttApiKeyFile.
+        All are reconciled once during system startup. Set this to null to
         disable later runs.
       '';
     };
@@ -282,6 +322,15 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = lib.mapAttrsToList (surface: settings: {
+      assertion = lib.all (
+        key:
+        (settingsRegistry.fields.${key}.perSurface or false)
+        && builtins.elem surface (settingsRegistry.fields.${key}.surfaces or settingsSurfaces)
+      ) (builtins.attrNames settings);
+      message = "services.openchamber.settingsBySurface.${surface} accepts only supported perSurface preferences; put shared settings in services.openchamber.settings.";
+    }) surfaceSettings;
+
     warnings = lib.optional (!isLoopbackHost cfg.host && cfg.passwordFile == null) (
       "services.openchamber binds to ${cfg.host} without services.openchamber.passwordFile; "
       + "the browser UI will be exposed without password protection."
@@ -366,6 +415,7 @@ in
       environment = {
         OPENCHAMBER_RECONCILE_BASE_URL = "http://${reconcileHost}:${toString cfg.port}";
         OPENCHAMBER_RECONCILE_DESIRED_SETTINGS_FILE = desiredSettingsFile;
+        OPENCHAMBER_RECONCILE_DESIRED_SURFACE_SETTINGS_FILE = desiredSurfaceSettingsFile;
         OPENCHAMBER_RECONCILE_SETTINGS_FILE = "${openchamberEnvironment.OPENCHAMBER_DATA_DIR}/settings.json";
         OPENCHAMBER_RECONCILE_STT_API_KEY = lib.boolToString (cfg.sttApiKeyFile != null);
       };

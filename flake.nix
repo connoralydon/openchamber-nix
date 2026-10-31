@@ -82,8 +82,29 @@
               }
             ];
           };
+          surfaceOnly = unconfigured.extendModules {
+            modules = [
+              {
+                services.openchamber.settingsBySurface.mobile = {
+                  sidebarGrouping = "project";
+                  sidebarDetailedZoneRows = true;
+                };
+              }
+            ];
+          };
+          sharedInSurface = surfaceOnly.extendModules {
+            modules = [
+              { services.openchamber.settingsBySurface.mobile.openTrackerLinksOnBoard = false; }
+            ];
+          };
           reconcileService = configured.config.systemd.services.openchamber-settings-reconcile;
           reconcileTimer = configured.config.systemd.timers.openchamber-settings-reconcile;
+          failedSurfaceAssertions =
+            evaluated:
+            nixpkgs.lib.filter (
+              item:
+              !item.assertion && nixpkgs.lib.hasPrefix "services.openchamber.settingsBySurface." item.message
+            ) evaluated.config.assertions;
         in
         {
           openchamber-settings-reconcile =
@@ -108,12 +129,25 @@
             assert configured.config.systemd.services.openchamber.serviceConfig.Restart == "always";
             assert !(unconfigured.config.systemd.services ? openchamber-settings-reconcile);
             assert unconfigured.config.systemd.services.openchamber.serviceConfig.Restart == "on-failure";
+            assert surfaceOnly.config.systemd.services ? openchamber-settings-reconcile;
+            assert surfaceOnly.config.systemd.services.openchamber.serviceConfig.Restart == "always";
+            assert failedSurfaceAssertions surfaceOnly == [ ];
+            assert failedSurfaceAssertions sharedInSurface != [ ];
             pkgs.runCommand "openchamber-settings-reconcile-test"
               {
                 nativeBuildInputs = [ pkgs.nodejs_22 ];
+                SURFACE_SETTINGS_FILE =
+                  surfaceOnly.config.systemd.services.openchamber-settings-reconcile.environment.OPENCHAMBER_RECONCILE_DESIRED_SURFACE_SETTINGS_FILE;
               }
               ''
                 node --test ${./nix/modules}/openchamber-settings-reconcile.test.mjs
+                node --input-type=module <<'JS'
+                import assert from 'node:assert/strict';
+                import { readFileSync } from 'node:fs';
+                assert.deepEqual(JSON.parse(readFileSync(process.env.SURFACE_SETTINGS_FILE, 'utf8')), {
+                  mobile: { sidebarGrouping: 'project', sidebarDetailedZoneRows: true },
+                });
+                JS
                 touch "$out"
               '';
           openchamber-stt =

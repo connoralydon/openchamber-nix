@@ -10,6 +10,25 @@ NixOS module options. `flake.nix` uses `nix/packages/openchamber-web.nix` and
 `nix/modules/openchamber.nix`. Upstream's separate Nix package and module files
 are not used by this fork's flake.
 
+## Per-client preferences
+
+Use `services.openchamber.settingsBySurface` to manage preferences separately for
+`web`, `desktop`, `vscode`, and `mobile`. The phone app and hosted mobile website
+use the same `mobile` profile. Common values in `settings` do not replace saved
+per-client choices, so configure each client profile that Nix must manage.
+
+Only preferences marked `perSurface` in OpenChamber's settings registry are valid
+in `settingsBySurface`. Put shared preferences, such as
+`openTrackerLinksOnBoard`, in `settings`. The module rejects a shared setting in a
+client profile because an API write there would change its common value.
+
+The module applies and verifies configured fields through the settings API at
+startup and at the reconciliation interval. It preserves unlisted fields and
+profiles. Removing a field from Nix stops management but leaves its saved value
+in place. These values are not locked: UI changes last until the next run.
+No settings reset or data migration is needed. Keep credentials out of both
+settings options because their values enter the Nix store.
+
 ## Application shortcuts
 
 Define custom bindings in the consuming configuration through
