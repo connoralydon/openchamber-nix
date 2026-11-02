@@ -28,6 +28,7 @@ export const createServerUtilsRuntime = (dependencies) => {
     getSpaceEventHub = null,
     getStoredSessionMetadata = null,
     openCodeTrust = null,
+    readWorktreeBootstrapStatus,
   } = dependencies;
 
   const setOpenCodePort = (port) => {
@@ -203,6 +204,7 @@ export const createServerUtilsRuntime = (dependencies) => {
       mergeSpaceSessionList: typeof getMergeSpaceSessionList === 'function' ? getMergeSpaceSessionList() : null,
       spaceEventHub: typeof getSpaceEventHub === 'function' ? getSpaceEventHub() : null,
       openCodeTrust,
+      readWorktreeBootstrapStatus,
     });
   };
 

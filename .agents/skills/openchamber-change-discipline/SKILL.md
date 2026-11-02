@@ -98,6 +98,8 @@ For type-only shared contracts, validate compile-time consumers. Add runtime ser
 
 A test is proof when it is deterministic and fails without the change: a pure function, a page script, a reducer. Behavior that lives in a runtime is proven by running that runtime and watching the scenario; a test there that only mirrors the implementation through mocks or races real timers adds upkeep and flakes, and the run already shows more.
 
+Pick the scenarios before counting them. First run the plain path a user takes, end to end in the running app; then break it the ordinary ways it breaks: a credential the server stops accepting, a server that is down, a sign-in the user cancels or that fails, an empty or slow answer. Look at what the user sees each time. These ordinary breaks are where shipped bugs sit, so they come before rare races and exotic inputs, which earn coverage only with a concrete reason. Tests then pin what the runs found.
+
 ## Where to run it
 
 Run the scenario in the runtime that executes the changed code. Every route below starts its own instance on free ports, beside the user's own app and dev servers.
@@ -110,7 +112,7 @@ Run the scenario in the runtime that executes the changed code. Every route belo
 | The in-app browser panel and its agent actions | `electron:dev`, then the actions through that instance's control route (`packages/web/server/lib/browser-control/DOCUMENTATION.md`) |
 | VS Code extension host or webview | `vscode:dev` with a debugging port, driven over CDP (`packages/vscode/README.md`) |
 | Behavior only the packaged app has: client auth headers, the updater | The installed app over CDP (`desktop-shell`, *Validation*) |
-| Capacitor shell | The iOS Simulator (`serve-sim`) |
+| Capacitor shell | The iOS Simulator (`serve-sim`); timing, motion and keyboard latency on a device (`performance-engineering`, `references/ios-webkit.md`) |
 | Pure logic | A deterministic test that fails without the change |
 
 Use `localhost`, never `127.0.0.1`, for the web server: the desktop app lifts Chromium's connection cap for `127.0.0.1`, and the panel then overruns Vite and resets connections. Build the desktop app only for a change that lives in its shell. Stop each instance by its own process id or process group, never by a name pattern that would stop someone else's.

@@ -17,9 +17,23 @@ the source of the values. Its comments say why each value is what it is.
 | Menu, popover, autocomplete, floating comment field | `oc-glass-popover oc-glass-floating` | No border and no extra `shadow-*` on it or a wrapper: either replaces the light. |
 | Surface always on screen over the transcript (composer, status pills) | `oc-surface-floating` + `oc-glass-floating` | Opaque on purpose: a blur there is redrawn every streamed frame. The composer adds `oc-composer-sheen`. |
 | Panel in the layout beside the chat (context panel card, work status card) | `oc-panel-edge` | A hairline ring and a short shadow, plus a faint lit top line in dark themes. Its page colour is the sidebar's (the theme's muted surface; halfway to it in light themes): JS-painted surfaces inside take it from `usePageColors`; it gains the full dropdown edge only while floating over the chat. |
-| Modal window | `DialogContent` (`oc-modal-shadow`) | Canvas tone (`bg-background`), the same as the Settings window; a sticky header inside paints `bg-background` too. Focus on open goes to the first text field, else the window, so no ring lands on the close cross. |
+| Modal window | `DialogContent` (`oc-modal-shadow`) | Canvas tone (`bg-background`), the same as the Settings window; a sticky header inside paints `bg-background` too. No `border`: the shadow carries the half-pixel ring. Focus on open goes to the first text field, else the window, so no ring lands on the close cross. |
 | Banner: warning, error, info | status background fill | No border. A very faint fill gets a stronger tint rather than a border back. |
 | Large code canvas (Files editor and tree, a diff) | its existing frame | The one place a full border stays: without it the canvas merges with the page. |
+
+## Elevation and edge tokens
+
+All in `design-system.css`; the surface classes above are built on them.
+
+| Token | Use |
+|---|---|
+| `--oc-elevation-button` / `-raised` / `-floating` | The three lifts. Tailwind's `shadow-sm` / `shadow-md` / `shadow-lg` (and `shadow-xl`) map onto them, so a call site's `shadow-*` lands on the same scale. |
+| `--oc-elevation-ring` | The half-pixel ring alone, for an inset edge where an outer one would be clipped (`oc-panel-edge`). |
+| `border-edge-muted` / `border-edge` / `border-edge-strong` | Lines at 40%, 70% and 100% of the theme's border colour (also `bg-`, `divide-`). Muted for quiet dividers, base for a frame, strong for what must hold its shape. Pick a level; an opacity of `border-border` is the old way. |
+
+A line between layout regions is a half-pixel inset hairline in
+`--oc-edge-strong` drawn as a shadow, so it takes no width (the sidebar's
+edge).
 
 ## Light and dark
 

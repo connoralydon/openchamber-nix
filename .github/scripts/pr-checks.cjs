@@ -74,20 +74,13 @@ const readTrustedContributors = (workspace) => {
 
 // `author_association` reports MEMBER only when the caller can see the author's
 // org membership, and an app token cannot see private members, so a maintainer
-// with hidden membership reads as CONTRIBUTOR. Any collaborator role counts.
-// The permission endpoint answers "read" for every GitHub user on a public
-// repository, so membership is asked directly instead.
+// with hidden membership reads as CONTRIBUTOR. The permission level is asked
+// instead: it answers "read" for every GitHub user on a public repository, so
+// Triage and up tells the team apart. The collaborator check is not used: the
+// app token gets 404 there for maintainers whose access comes through the
+// organization.
 const hasRepoAccess = async ({ github, owner, repo, pr }) => {
   if (["OWNER", "MEMBER", "COLLABORATOR"].includes(pr.author_association)) return true;
-  try {
-    await github.rest.repos.checkCollaborator({ owner, repo, username: pr.user.login });
-    return true;
-  } catch (error) {
-    if (error.status === 404) return false;
-    if (error.status !== 403) throw error;
-  }
-  // A token that may not list collaborators can still read a permission level,
-  // which tells the team apart though not a Read collaborator.
   const { data } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: pr.user.login });
   return ["admin", "maintain", "write", "triage"].includes(data.role_name ?? data.permission);
 };

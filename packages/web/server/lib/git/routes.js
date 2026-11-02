@@ -23,9 +23,11 @@ const toGitRemoteSummary = (remote) => ({
 const WORKTREE_INSTANCE_DISPOSE_TIMEOUT_MS = 5_000;
 
 /**
- * Builds the best-effort disposal hook handed to `removeWorktree`. The URL and
- * auth headers are route dependencies, so this module never resolves the
- * OpenCode runtime itself, and both are read at call time. OpenCode 2 has no
+ * Builds the best-effort disposal hook handed to `removeWorktree`, also run
+ * when a repair completes a failed checkout so OpenCode opens the repaired
+ * folder afresh. The URL and auth headers are route dependencies, so this
+ * module never resolves the OpenCode runtime itself, and both are read at
+ * call time. OpenCode 2 has no
  * instance route; evicting the location drops its cached services (file
  * watchers, LSP, MCP), which is what held the worktree folder.
  *
@@ -37,7 +39,7 @@ const WORKTREE_INSTANCE_DISPOSE_TIMEOUT_MS = 5_000;
  */
 const toLocationKey = (directory) => String(directory || '').replace(/\\/g, '/').replace(/\/+$/, '');
 
-const createWorktreeInstanceDisposer = ({ buildOpenCodeUrl, getOpenCodeAuthHeaders }) => {
+export const createWorktreeInstanceDisposer = ({ buildOpenCodeUrl, getOpenCodeAuthHeaders }) => {
   return async (worktreeDirectory) => {
     const client = OpenCode.make({
       baseUrl: buildOpenCodeUrl('/', '').replace(/\/$/, ''),
@@ -69,7 +71,7 @@ const createWorktreeInstanceDisposer = ({ buildOpenCodeUrl, getOpenCodeAuthHeade
 // hooks find the project's tools; reads the UI repeats on its own may not
 // (lib/environment/refresh-scope.js).
 const worktreeTitleBodySchema = z.object({ title: z.string() });
-const worktreePinBodySchema = z.object({ pinned: z.boolean() });
+const worktreePinBodySchema = z.object({ pinned: z.boolean(), list: z.string().nullable().optional() });
 
 const userAction = (handler) => (req, res, next) => runAsUserAction(() => handler(req, res, next));
 
@@ -207,9 +209,12 @@ export function registerGitRoutes(app, {
   app.post('/api/git/managed-ssh-credentials', async (req, res) => {
     const input = req.body;
     const keys = input?.operation === 'import' ? ['operation', 'candidateId', 'expectedFingerprint', 'confirmed'] : ['operation'];
+    if (input?.operation !== 'inventory' && Object.hasOwn(input ?? {}, 'passphrase')) keys.push('passphrase');
     if (!input || Object.getPrototypeOf(input) !== Object.prototype
       || !['inventory', 'discover', 'import'].includes(input.operation)
       || Object.keys(input).length !== keys.length || !keys.every((key) => Object.hasOwn(input, key))
+      || (Object.hasOwn(input, 'passphrase') && (!isString(input.passphrase)
+        || input.passphrase.length > 1024 || /[\0\r\n]/.test(input.passphrase)))
       || (input.operation === 'import' && (input.confirmed !== true || !isString(input.candidateId)
         || !/^[A-Za-z0-9_-]{1,200}$/.test(input.candidateId) || !isString(input.expectedFingerprint)
         || !/^SHA256:[A-Za-z0-9+/]{43}=?$/.test(input.expectedFingerprint)))) {
@@ -909,6 +914,9 @@ export function registerGitRoutes(app, {
       res.json({ diff, submodule });
     } catch (error) {
       if (sendGitPathError(res, error)) return;
+      if (isNonRepoGitError(error)) {
+        return res.status(409).json({ error: 'This directory is not a Git repository.', code: 'not_repository' });
+      }
       console.error('Failed to get git diff:', error);
       res.status(500).json({ error: error.message || 'Failed to get git diff' });
     }
@@ -941,6 +949,9 @@ export function registerGitRoutes(app, {
 
       res.json({ diffs });
     } catch (error) {
+      if (isNonRepoGitError(error)) {
+        return res.status(409).json({ error: 'This directory is not a Git repository.', code: 'not_repository' });
+      }
       console.error('Failed to get git diffs:', error);
       res.status(500).json({ error: error.message || 'Failed to get git diffs' });
     }
@@ -975,6 +986,9 @@ export function registerGitRoutes(app, {
       });
     } catch (error) {
       if (sendGitPathError(res, error)) return;
+      if (isNonRepoGitError(error)) {
+        return res.status(409).json({ error: 'This directory is not a Git repository.', code: 'not_repository' });
+      }
       console.error('Failed to get git file diff:', error);
       res.status(500).json({ error: error.message || 'Failed to get git file diff' });
     }
@@ -1696,7 +1710,7 @@ export function registerGitRoutes(app, {
       if (!body.success) {
         return res.status(400).json({ error: 'pinned must be a boolean' });
       }
-      res.json(await setWorktreePinned(directory, body.data.pinned));
+      res.json(await setWorktreePinned(directory, body.data.pinned, body.data.list ?? null));
     } catch (error) {
       console.error('Failed to pin the worktree:', error);
       res.status(Number.isInteger(error?.status) ? error.status : 500).json({ error: error.message || 'Failed to pin the worktree' });
@@ -1989,6 +2003,9 @@ export function registerGitRoutes(app, {
       });
       res.json(log);
     } catch (error) {
+      if (error?.code === 'revision_not_found') {
+        return res.status(404).json({ error: error.message, code: error.code });
+      }
       console.error('Failed to get log:', error);
       res.status(500).json({ error: error.message || 'Failed to get commit log' });
     }
@@ -2060,5 +2077,5 @@ export function registerGitRoutes(app, {
 
   // The session service creates worktrees from change requests through the
   // same checks the route uses.
-  return { createWorktree: worktreeCreation.create };
+  return { createWorktree: worktreeCreation.create, createWorktreeInstanceDisposer };
 }

@@ -8,7 +8,9 @@ import { writeScreenshot } from './screenshots.js';
 import { createProjectKnowledgeActions } from './project-knowledge.js';
 import { createPageAnswers, createRenderPageAction } from './render-page.js';
 import { createImageGenerationAction } from './generate-image.js';
+import { createSecretRequests } from './secret-request.js';
 import { createWorkNamer } from '../openchamber-sessions/work-naming.js';
+import { CHATS_SCOPE_PUBLIC_ID } from '../scheduled-tasks/chats-scope.js';
 
 const DEFAULT_WAIT_TIMEOUT_SECONDS = 600;
 const MAX_WAIT_TIMEOUT_SECONDS = 86_400;
@@ -219,6 +221,7 @@ export const createOpenChamberControlService = (dependencies) => {
     getOpenCodeAuthHeaders,
     waitForOpenCodeReady,
     sessionService,
+    chatsScope = null,
     scheduledTaskService,
     browserControl = null,
     fileOpen = null,
@@ -231,8 +234,12 @@ export const createOpenChamberControlService = (dependencies) => {
     resolveProjectContextId = null,
     isKnowledgeToolEnabled = async () => true,
     isRenderToolEnabled = async () => true,
+    isSecretToolEnabled = async () => true,
+    // Where `secret.request` writes what the user saves
+    // (`createSecretFiles`); absent means the server cannot take secrets.
+    secretFiles = null,
     // Hears when a page an agent shows starts and stops waiting for the
-    // user's answer (render.page with awaitAnswer).
+    // user's answer (render.page with awaitAnswer, and secret.request).
     onPageWaitChange = () => {},
     // Puts a plan in front of the user; answers how many windows it reached.
     showPlan = null,
@@ -242,8 +249,8 @@ export const createOpenChamberControlService = (dependencies) => {
     // An agent waiting on its pull request (../pr-watch); absent means the
     // server cannot offer it.
     prWatch = null,
-    // Agent workflows (../workflows/runtime.js); absent where they are not
-    // available, which is every build without OPENCHAMBER_WORKFLOWS_ENABLE.
+    // Agent workflows (../workflows/runtime.js); absent means the server
+    // cannot offer them.
     workflowRuntime = null,
     // Archive lives in OpenChamber's own store now — v2 has no route that sets
     // Session.time.archived — so an unwired store simply means nothing is archived.
@@ -324,11 +331,14 @@ export const createOpenChamberControlService = (dependencies) => {
 
   const projects = async () => {
     const settings = await readSettingsFromDiskMigrated();
-    return sanitizeProjects(settings?.projects || []).map((project) => ({
+    const configured = sanitizeProjects(settings?.projects || []).map((project) => ({
       id: project.id,
       path: path.resolve(project.path),
       label: asNonEmptyString(project.label) || path.basename(project.path) || project.path,
     }));
+    return chatsScope
+      ? [...configured, { id: CHATS_SCOPE_PUBLIC_ID, path: chatsScope.root, label: 'Chats' }]
+      : configured;
   };
 
   // projectId and directory are two names for one scope. Accepting both let
@@ -357,8 +367,23 @@ export const createOpenChamberControlService = (dependencies) => {
     resolveDirectory: (input) => sessionService.resolveDirectory(input),
   });
 
+  // A message the user steered into the turn stays in OpenCode's inbox until
+  // a step ends. A queued one waits for the turn to end, so the page's call
+  // returning would not deliver it. A failed read counts as none, so the page
+  // waits as it did before this check.
+  const hasUnreadChat = async (sessionID) => {
+    try {
+      const client = await getClient();
+      const items = await client.session.inbox.list({ sessionID });
+      return items.some((item) => item.type === 'user' && item.delivery === 'steer');
+    } catch (error) {
+      console.warn('[render.page] could not read the session inbox:', error?.message ?? error);
+      return false;
+    }
+  };
   const pageAnswers = createPageAnswers({ onWaitChange: onPageWaitChange });
-  const renderPage = createRenderPageAction({ isEnabled: isRenderToolEnabled, pageAnswers });
+  const renderPage = createRenderPageAction({ isEnabled: isRenderToolEnabled, pageAnswers, hasUnreadChat });
+  const secretRequests = createSecretRequests({ isEnabled: isSecretToolEnabled, files: secretFiles, onWaitChange: onPageWaitChange, hasUnreadChat });
   const generateImage = createImageGenerationAction({
     getClient,
     readSettings: readSettingsFromDiskMigrated,
@@ -902,6 +927,14 @@ export const createOpenChamberControlService = (dependencies) => {
       if (action === 'image.generate') {
         return await generateImage(input, { directory: asNonEmptyString(contextDirectory), signal: options.signal });
       }
+      if (action === 'secret.request') {
+        return await secretRequests.request(input, {
+          sessionId: asNonEmptyString(options.contextSessionId),
+          callId: asNonEmptyString(options.contextCallId),
+          directory: asNonEmptyString(contextDirectory),
+          signal: options.signal,
+        });
+      }
       if (action === 'file.open') {
         if (!fileOpen) {
           throw new OpenChamberControlError('The file viewer is not available on this server', 503);
@@ -1097,6 +1130,6 @@ export const createOpenChamberControlService = (dependencies) => {
   // (v2 dropped `context.directory` from a tool call), so it sends the session
   // id and the directory is resolved here, where it is authoritative.
   // `answerPage` is the chat's side of a page that waits (render.page with
-  // awaitAnswer).
-  return { execute, resolveSessionDirectory, answerPage: pageAnswers.answer };
+  // awaitAnswer), `answerSecret` the chat's side of a secret.request card.
+  return { execute, resolveSessionDirectory, answerPage: pageAnswers.answer, answerSecret: secretRequests.answer };
 };

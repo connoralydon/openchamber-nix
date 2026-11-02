@@ -1,10 +1,12 @@
 import React from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { cn } from '@/lib/utils';
 import {
   formatShortcutForDisplay,
   getEffectiveShortcutCombo,
 } from '@/lib/shortcuts';
 import { useUIStore } from '@/stores/useUIStore';
+import { useConfigStore } from '@/stores/useConfigStore';
 import { useEnterpriseMode, useJevBlockedByEnterprise } from '@/stores/useEnterprisePolicyStore';
 import { useSettingsDirectory } from '@/hooks/useSettingsDirectory';
 import { useProjectsStore } from '@/stores/useProjectsStore';
@@ -51,6 +53,7 @@ import { SettingsPageLayout } from '@/components/sections/shared/SettingsPageLay
 import { SettingsScrollbarTopClearanceContext } from '@/components/sections/shared/settingsScrollbarClearance';
 import {
   SETTINGS_SECTION_TITLE_CLASS,
+  SettingsBadge,
 } from '@/components/sections/shared/SettingsSection';
 import { useDeviceInfo } from '@/lib/device';
 import { isDesktopLocalOriginActive, isDesktopShell, isVSCodeRuntime, isWebRuntime } from '@/lib/desktop';
@@ -70,6 +73,7 @@ import {
 import { buildSettingsSearchResults, type SettingsSearchResult } from '@/lib/settings/search';
 import { useTrackerDescriptors } from '@/lib/trackers/registry';
 import { useSourceControlProviders } from '@/lib/source-control/providers/registry';
+import { acknowledgeNewSettingPage, getNewSettingPages } from '@/lib/settings/newSettings';
 
 // UI Kit: fixed split-page sidebar width
 const SETTINGS_SPLIT_SIDEBAR_WIDTH = 280;
@@ -201,6 +205,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
   const openSettingsShortcutOverride = useUIStore((state) => state.shortcutOverrides.open_settings);
   const settingsSlug = resolveSettingsSlug(settingsPageRaw);
 
+  const [, refreshNewSettings] = React.useReducer((revision: number) => revision + 1, 0);
   const [mobileStage, setMobileStage] = React.useState<MobileStage>(initialMobileStage);
   // Seed with the mount-time slug when opening at the nav stage: the slug
   // persists across opens, and the deep-link auto-jump below must react only
@@ -268,6 +273,28 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
       .slice()
       .sort((a, b) => (rank.get(a.slug) ?? 999) - (rank.get(b.slug) ?? 999));
   }, [visiblePages]);
+
+  const voiceSettings = useConfigStore(useShallow((state) => ({
+    showMessageTTSButtons: state.showMessageTTSButtons,
+    autoReadAloudEnabled: state.autoReadAloudEnabled,
+    voiceProvider: state.voiceProvider,
+    dictationEnabled: state.dictationEnabled,
+    sttProvider: state.sttProvider,
+  })));
+  const searchAvailabilityCtx = React.useMemo(
+    () => ({ ...runtimeCtx, isDesktopLocalOrigin, isMac, isWindows, isLinux, voiceSettings }),
+    [runtimeCtx, isDesktopLocalOrigin, isMac, isWindows, isLinux, voiceSettings],
+  );
+  const newSettingPages = getNewSettingPages(searchAvailabilityCtx);
+  const hasNewSettings = newSettingPages.some((page) => visiblePages.some((visible) => visible.slug === page));
+
+  React.useEffect(() => {
+    if (isMobile && mobileStage === 'nav') return;
+    if (!newSettingPages.includes(settingsSlug)) return;
+    if (!visiblePages.some((visible) => visible.slug === settingsSlug)) return;
+    acknowledgeNewSettingPage(settingsSlug, searchAvailabilityCtx);
+    refreshNewSettings();
+  }, [isMobile, mobileStage, newSettingPages, settingsSlug, visiblePages, searchAvailabilityCtx]);
 
   const activeProjectId = useProjectsStore((state) => state.activeProjectId);
   const settingsDirectory = useSettingsDirectory();
@@ -344,14 +371,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
   const settingsSearchResults = React.useMemo(() => {
     return buildSettingsSearchResults({
       query: settingsSearchQuery,
-      runtimeCtx: { ...runtimeCtx, isDesktopLocalOrigin, isMac, isWindows, isLinux },
+      runtimeCtx: searchAvailabilityCtx,
       visiblePageSlugs,
       t,
       getPageTitle,
       trackers,
       sourceControlProviders,
     });
-  }, [getPageTitle, isDesktopLocalOrigin, isMac, isWindows, isLinux, runtimeCtx, settingsSearchQuery, sourceControlProviders, t, trackers, visiblePageSlugs]);
+  }, [getPageTitle, searchAvailabilityCtx, settingsSearchQuery, sourceControlProviders, t, trackers, visiblePageSlugs]);
 
   const prepareSettingsSearchTarget = React.useCallback((result: SettingsSearchResult): string => {
     if (result.id.startsWith('agents.')) {
@@ -961,9 +988,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
                             <span className="flex items-center gap-1.5 whitespace-nowrap overflow-hidden transition-opacity duration-150 opacity-100">
                               <span className="typography-ui-label font-normal truncate">{getPageTitle(page.slug)}</span>
                               {page.slug === 'tunnel' && (
-                                <span className="shrink-0 typography-micro px-1 rounded leading-none pb-px text-[var(--status-warning)] bg-[var(--status-warning)]/10">
-                                  {t('settings.view.badge.beta')}
-                                </span>
+                                <SettingsBadge>{t('settings.view.badge.beta')}</SettingsBadge>
+                              )}
+                              {newSettingPages.includes(page.slug) && (
+                                <SettingsBadge>{t('settings.view.badge.new')}</SettingsBadge>
                               )}
                             </span>
                           </button>
@@ -1083,10 +1111,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
             </button>
           ) : null}
 
-          <div className="min-w-0 flex-1 px-2 typography-ui-label font-medium text-foreground truncate">
-            {mobileStage === 'nav'
-              ? t('settings.view.home.title')
-              : (activePageMeta ? getPageTitle(activePageMeta.slug) : t('settings.view.home.title'))}
+          <div className="min-w-0 flex-1 px-2 typography-ui-label font-medium text-foreground truncate flex items-center gap-2">
+            <span className="truncate">
+              {mobileStage === 'nav'
+                ? t('settings.view.home.title')
+                : (activePageMeta ? getPageTitle(activePageMeta.slug) : t('settings.view.home.title'))}
+            </span>
+            {(mobileStage === 'nav' && hasNewSettings) && (
+              <SettingsBadge>{t('settings.view.badge.new')}</SettingsBadge>
+            )}
           </div>
 
           {onClose && (

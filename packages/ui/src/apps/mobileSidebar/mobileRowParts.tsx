@@ -79,12 +79,13 @@ export const MobileTwoLineLayout: React.FC<{
 }> = ({ indent, onSelect, ariaLabel, chevron, firstLine, secondLine }) => {
   const lines = <>
     <span className="flex h-5 min-w-0 items-center gap-2">{firstLine}</span>
-    <span className="flex h-4 min-w-0 items-center gap-1.5 text-muted-foreground">
+    {secondLine || chevron ? <span className="flex h-4 min-w-0 items-center gap-1.5 text-muted-foreground">
       {chevron ? <span aria-hidden className="size-3.5 shrink-0" /> : null}
       {secondLine}
-    </span>
+    </span> : null}
   </>;
-  const layoutClass = 'flex min-w-0 flex-1 flex-col gap-1 py-2.5 pe-3 text-start';
+  // 6px above and below, as the desktop's two-line rows.
+  const layoutClass = 'flex min-h-9 min-w-0 flex-1 flex-col gap-1 py-1.5 pe-3 text-start';
   return (
     <div className="relative flex min-w-0 flex-1">
       {onSelect ? (
@@ -100,10 +101,10 @@ export const MobileTwoLineLayout: React.FC<{
       ) : (
         <div className={layoutClass} style={{ paddingInlineStart: indent }}>{lines}</div>
       )}
-      {/* Centred on the second line's first icon: 10px padding, a 20px title
-          line and a 4px gap put that line's middle 42px down. */}
+      {/* Centred on the second line's first icon: 6px padding, a 20px title
+          line and a 4px gap put that line's middle 38px down. */}
       {chevron ? (
-        <span className="absolute z-10 flex h-8 items-center" style={{ insetInlineStart: indent - 9, top: 26 }}>{chevron}</span>
+        <span className="absolute z-10 flex h-8 items-center" style={{ insetInlineStart: indent - 9, top: 22 }}>{chevron}</span>
       ) : null}
     </div>
   );

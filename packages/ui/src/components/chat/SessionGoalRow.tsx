@@ -64,7 +64,7 @@ export const SessionGoalRow: React.FC<SessionGoalRowProps> = React.memo(({ sessi
   return (
     <div
       role="group"
-      className="flex oc-composer-row min-w-0 items-center gap-2 border-b border-border/60 ps-3 pe-1.5"
+      className="flex oc-composer-row min-w-0 items-center gap-2 border-b border-edge ps-3 pe-1.5"
       aria-label={t('chat.goal.row.aria')}
       title={objectiveContent ?? undefined}
     >

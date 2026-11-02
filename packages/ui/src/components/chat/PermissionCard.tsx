@@ -116,7 +116,7 @@ export const PermissionRequestContent: React.FC<{ permission: PermissionRequest 
       const files = permissionFilePreviewsSchema.parse(permission.metadata?.files);
       if (files.length > 0) {
         return (
-          <ScrollableOverlay outerClassName="max-h-[60vh]" className="tool-output-surface p-1 rounded-xl border border-border/20 bg-transparent">
+          <ScrollableOverlay outerClassName="max-h-[60vh]" className="tool-output-surface p-1 rounded-xl border border-edge-muted bg-transparent">
             {files.map((file, index) => (
               <DiffPreview key={`${file.file}:${index}`} diff={file.patch} filePath={file.file} />
             ))}
@@ -176,7 +176,7 @@ export const PermissionRequestContent: React.FC<{ permission: PermissionRequest 
             </div>
           )}
           {changes && (
-            <ScrollableOverlay outerClassName="max-h-[60vh]" className="tool-output-surface p-1 rounded-xl border border-border/20 bg-transparent">
+            <ScrollableOverlay outerClassName="max-h-[60vh]" className="tool-output-surface p-1 rounded-xl border border-edge-muted bg-transparent">
               <DiffPreview diff={changes} filePath={filePath} />
             </ScrollableOverlay>
           )}
@@ -190,7 +190,7 @@ export const PermissionRequestContent: React.FC<{ permission: PermissionRequest 
 
       if (content) {
         return (
-          <ScrollableOverlay outerClassName="max-h-[60vh]" className="tool-output-surface p-1 rounded-xl border border-border/20 bg-transparent">
+          <ScrollableOverlay outerClassName="max-h-[60vh]" className="tool-output-surface p-1 rounded-xl border border-edge-muted bg-transparent">
             <WritePreview content={content} filePath={filePath} />
           </ScrollableOverlay>
         );
@@ -298,7 +298,7 @@ export const PermissionRequestContent: React.FC<{ permission: PermissionRequest 
   return (
     <>
       {held ? (
-        <div className="flex items-start gap-2 px-2 py-1.5 border-b border-border/20 typography-meta text-[var(--status-warning)]">
+        <div className="flex items-start gap-2 px-2 py-1.5 border-b border-edge-muted typography-meta text-[var(--status-warning)]">
           <Icon name="shield-keyhole" className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
           <span>
             {t('chat.permissionCard.heldBySafetyNet')}
@@ -402,7 +402,7 @@ export const PermissionActions: React.FC<{
   );
 
   return (
-    <div className="px-2 pb-2 sm:pb-1.5 pt-1.5 sm:pt-1 flex flex-col sm:flex-row sm:items-center sm:flex-wrap gap-1.5 border-t border-border/20">
+    <div className="px-2 pb-2 sm:pb-1.5 pt-1.5 sm:pt-1 flex flex-col sm:flex-row sm:items-center sm:flex-wrap gap-1.5 border-t border-edge-muted">
       <button
         onClick={() => onRespond('once')}
         disabled={isResponding}
@@ -459,8 +459,8 @@ export const PermissionCard: React.FC<PermissionCardProps> = ({ permission, onRe
   return (
     <div className="group w-full pt-0 pb-2">
       <div className="chat-column">
-        <div className="-mt-1 border border-border/30 rounded-xl bg-muted/10">
-          <div className="px-2 py-1.5 border-b border-border/20 bg-muted/5">
+        <div className="-mt-1 border border-edge-muted rounded-xl bg-muted/10">
+          <div className="px-2 py-1.5 border-b border-edge-muted bg-muted/5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Icon name="question" className="h-3.5 w-3.5 text-[var(--status-warning)]" />

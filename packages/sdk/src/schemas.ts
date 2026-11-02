@@ -22,8 +22,13 @@ export {
 export {
   browserControlActionSchema,
   browserProviderResultSchema,
+  notificationsProviderMethodSchema,
+  notificationsProviderSchemasV1,
+  sessionEventResultSchema,
   sourceControlProviderMethodSchema,
   sourceControlProviderSchemasV1,
+  trackerProviderMethodSchema,
+  trackerProviderSchemasV1,
 } from './service-provider-schemas.ts';
 export {
   surfaceClipboardAnswerSchema,

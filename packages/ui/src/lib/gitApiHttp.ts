@@ -105,7 +105,12 @@ const gitFileDiffSchema = z.object({
 });
 
 async function pathDiffResponseError(response: Response, fallback: string): Promise<Error> {
-  const parsed = gitPathUnavailableBodySchema.safeParse(await response.json().catch(() => null));
+  const body: unknown = await response.json().catch(() => null);
+  const nonRepository = z.object({ code: z.literal('not_repository'), error: z.string() }).safeParse(body);
+  if (response.status === 409 && nonRepository.success) {
+    return new Error(nonRepository.data.error);
+  }
+  const parsed = gitPathUnavailableBodySchema.safeParse(body);
   if (parsed.success && (response.status === 404 || response.status === 422)) {
     return new GitPathUnavailableError(parsed.data.error, parsed.data.code);
   }
@@ -1206,7 +1211,7 @@ export async function getGitDiffs(directory: string, options: GetGitDiffsOptions
       body: JSON.stringify({ paths: paths.slice(start, start + GIT_DIFFS_MAX_PATHS), staged: staged === true, context: contextLines }),
     });
     if (!response.ok) {
-      throw new Error(`Failed to get git diffs: ${response.statusText}`);
+      throw await pathDiffResponseError(response, 'Failed to get git diffs');
     }
     for (const entry of gitPathDiffsSchema.parse(await response.json()).diffs) {
       entries.push('diff' in entry
@@ -1704,11 +1709,11 @@ export async function setGitWorktreeTitle(directory: string, title: string): Pro
 
 const worktreePinResultSchema = z.object({ pinned: z.boolean(), branch: z.string() });
 
-export async function setGitWorktreePinned(directory: string, pinned: boolean): Promise<GitWorktreePinResult> {
+export async function setGitWorktreePinned(directory: string, pinned: boolean, list: string | null = null): Promise<GitWorktreePinResult> {
   const response = await runtimeFetch(buildUrl(`${API_BASE}/worktrees/pin`, directory), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pinned }),
+    body: JSON.stringify(list ? { pinned, list } : { pinned }),
   });
   const body = await response.json().catch(() => null);
   if (!response.ok) {

@@ -86,8 +86,10 @@ before touching the filesystem). Rationale: metadata rides every
 
 1. `createSessionGoalRuntime` subscribes to the global SSE hub (same pattern
    as session-assist — it needs the envelope's `directory`).
-2. `session.status: idle` arms a 15s per-session timer; `busy`/`retry` clears
-   it. A `session.updated` carrying a fresh active goal (`turnsUsed === 0` or
+2. `session.status: idle` arms a 3s per-session timer; `busy`/`retry` clears
+   it. The window only lets a burst of status events settle: every check
+   after it reads live state. Rechecks while work goes on without the parent,
+   and retries after a failed read, wait 15s instead. A `session.updated` carrying a fresh active goal (`turnsUsed === 0` or
    `statusReason === 'resumed'`) arms a kickoff timer — 3s for fresh goals,
    ~250ms for an explicit Resume so the nudge feels immediate — since setting
    a goal on an idle session emits no status transition.
@@ -123,6 +125,19 @@ before touching the filesystem). Rationale: metadata rides every
      plumbing roles are dropped from the view;
    - quiescence check via the message tail (trailing user message or
      unfinished assistant reply → bail; the next idle transition re-arms);
+   - background commands: `shell.list` for the session's directory (the
+     header-scoped read in `../opencode/session-activity.js`; that location is
+     already running). A command the session started in this round, at or
+     after its newest non-synthetic user message (the goal's start when none
+     is in the window), holds the audit: OpenCode wakes the session with the
+     result, and auditing earlier reads "waiting for the tests" as unfinished
+     and nudges the agent over a running command. Commands from earlier rounds,
+     such as a dev server, are not waited for. The goal instructions tell the
+     agent to stop every command that does not finish on its own before ending
+     a turn, since the wait cannot tell a server from tests. After 30 minutes
+     the turn is audited as it stands: a command running that long is most
+     likely a server left running. Resume, and a turn that ended in an error or
+     abort, do not wait. An unreadable list is unknown and rechecks;
    - token accounting as a SNAPSHOT of the latest completed assistant turn:
      `input + cache.read + output`. Earlier turns' inputs and outputs fold
      into the next turn's cache, so the latest snapshot already carries the
@@ -213,9 +228,25 @@ before touching the filesystem). Rationale: metadata rides every
 
 Built inline in `runtime.js`: the objective as untrusted user data in an
 XML-escaped `<objective>` block, budget numbers, keep-the-full-objective and
-work-from-evidence rules, a completion-audit instruction, and the requirement
-to end every turn with a factual done/verified/remaining report — the audit
-sees only that final turn, so the report is its evidence.
+work-from-evidence rules, a completion-audit instruction, and
+`GOAL_REPORT_INSTRUCTIONS` (`audit.js`): stop background commands that never
+finish before ending a turn, and end every turn with four lines, Done,
+Verified, Remaining and Needs from the user, each with "nothing" said out loud.
+The audit sees only that final turn, so the report is its evidence; Remaining
+and Needs from the user answer the `remaining` and `needs_user` questions
+directly, and user-side steps (testing in the app, review, commits) are named
+as neither. The first-turn reminder (`create.js` and the UI's
+`session-ui-store.ts`) carries the same text.
+
+## Recovery after connecting
+
+The loop is event-driven, so an idle event lost while the server or the event
+stream was down leaves an active goal without a timer. On every connect of
+the global event hub, `recoverActiveGoals` lists the 50 most recently updated
+root sessions (`GET /api/session`, global, starts no location) and arms a
+kickoff for each one whose goal is active and has no timer or tick. The tick
+re-reads the goal from the store and checks the session is idle, so a busy
+session or a settled goal costs one read.
 
 ## UI consumers (packages/ui)
 

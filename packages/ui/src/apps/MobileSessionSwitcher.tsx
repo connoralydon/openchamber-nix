@@ -189,7 +189,7 @@ export const MobileSessionSwitcher: React.FC<{
         role="dialog"
         aria-label={t('sessions.switcher.openAria')}
         className={cn(
-          'oc-surface-elevated flex flex-col overflow-hidden rounded-[20px] border border-border/70 bg-surface-elevated p-2 shadow-[0_12px_32px_rgb(0_0_0_/_0.2)] will-change-transform',
+          'oc-surface-elevated flex flex-col overflow-hidden rounded-[20px] border border-edge bg-surface-elevated p-2 shadow-[0_12px_32px_rgb(0_0_0_/_0.2)] will-change-transform',
           isPopover ? 'absolute origin-top-left' : 'mx-3 mt-2',
           isExiting ? 'pointer-events-none' : 'pointer-events-auto',
         )}

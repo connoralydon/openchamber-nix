@@ -135,7 +135,7 @@ const trackWorktreeBootstrapTask = (directory, task) => {
   return task;
 };
 
-const waitForActiveWorktreeBootstrap = async (directory) => {
+export const waitForActiveWorktreeBootstrap = async (directory) => {
   const key = toBootstrapStateKey(directory);
   if (!key) {
     return;
@@ -2561,14 +2561,26 @@ const warnedUnsupportedRoots = new Set();
 // `repoRoot` is null inside a bare repository or a .git directory, where Git
 // prints the git dir and then fails on `--show-toplevel`; those still count
 // as repositories.
-const probeRepository = async (directoryPath) => {
+const probeRepository = async (directoryPath, { strict = false } = {}) => {
   const notRepository = { isRepository: false, repoRoot: null };
   if (!directoryPath || !fs.existsSync(directoryPath)) {
+    if (strict) throw new Error('Project directory does not exist or is inaccessible');
     return notRepository;
   }
 
-  const result = await runGitCommand(directoryPath, ['rev-parse', '--git-dir', '--show-toplevel'], { timeoutMs: GIT_PROBE_TIMEOUT_MS });
+  const options = { timeoutMs: GIT_PROBE_TIMEOUT_MS };
+  if (strict) options.env = { ...await buildGitEnv(directoryPath), LC_ALL: 'C' };
+  const result = await runGitCommand(directoryPath, ['rev-parse', '--git-dir', '--show-toplevel'], options);
   const [gitDir = '', topLevel = ''] = result.stdout.split(/\r?\n/).map((line) => line.trim());
+  if (strict && !result.success) {
+    if (result.exitCode === 128 && !gitDir && /^fatal: not a git repository \(or any (?:of the parent directories\):|parent up to mount point [^\r\n]+\))/i.test(result.stderr.trim())) {
+      return notRepository;
+    }
+    // Bare repositories and .git directories have a git dir but no work tree.
+    if (!(gitDir && result.exitCode === 128 && /must be run in a work tree/i.test(result.stderr))) {
+      throw new Error(result.message || 'Failed to probe Git repository');
+    }
+  }
   if (!gitDir) return notRepository;
   if (!result.success) return { isRepository: true, repoRoot: null };
 
@@ -2583,8 +2595,8 @@ const probeRepository = async (directoryPath) => {
   return notRepository;
 };
 
-export async function isGitRepository(directory) {
-  return (await probeRepository(normalizeDirectoryPath(directory))).isRepository;
+export async function isGitRepository(directory, options) {
+  return (await probeRepository(normalizeDirectoryPath(directory), options)).isRepository;
 }
 
 export async function getGlobalIdentity() {
@@ -4943,7 +4955,7 @@ export async function getWorktrees(directory) {
       .filter((entry) => entry.bare !== true)
       .map((entry) => {
         const title = entry.branch ? titles.get(entry.branch) : undefined;
-        const pinnedAt = entry.branch ? pins.get(entry.branch) : undefined;
+        const pin = entry.branch ? pins.get(entry.branch) : undefined;
         return {
           head: entry.head || '',
           name: path.basename(entry.worktree || ''),
@@ -4952,7 +4964,8 @@ export async function getWorktrees(directory) {
           prunable: entry.prunable === true,
           // Absent until the task is named; JSON leaves an undefined key out.
           title: title || undefined,
-          pinnedAt,
+          pinnedAt: pin?.pinnedAt,
+          pinList: pin?.list,
         };
       });
   } catch (error) {
@@ -5033,18 +5046,36 @@ const readBranchPins = async (repositoryDirectory) => {
     const newline = record.indexOf('\n');
     if (newline <= 0) continue;
     const branch = record.slice('branch.'.length, newline - BRANCH_PIN_KEY_SUFFIX.length);
-    const pinnedAt = Number(record.slice(newline + 1).trim());
-    if (branch && Number.isFinite(pinnedAt) && pinnedAt > 0) pins.set(branch, pinnedAt);
+    const pin = parseBranchPin(record.slice(newline + 1));
+    if (branch && pin) pins.set(branch, pin);
   }
   return pins;
 };
+
+/**
+ * The stored pin: the time it was pinned, then the id of the user's pin list
+ * when it is filed in one (`<at> <list>`). A build that knows no lists reads
+ * such a value as no pin, which leaves the worktree in its project.
+ */
+const parseBranchPin = (value) => {
+  const [at, list] = String(value || '').trim().split(/\s+/, 2);
+  const pinnedAt = Number(at);
+  if (!Number.isFinite(pinnedAt) || pinnedAt <= 0) return null;
+  return { pinnedAt, list: list || undefined };
+};
+const PIN_LIST_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 /**
  * Pin or unpin the task of the worktree at `directory`. A detached worktree
  * has no branch to keep the pin and is refused with 409. Clients re-list the
  * worktrees on the topology event published after a write.
  */
-export async function setWorktreePinned(directory, pinned, now = Date.now()) {
+export async function setWorktreePinned(directory, pinned, list = null, now = Date.now()) {
+  if (list !== null && !PIN_LIST_ID_PATTERN.test(list)) {
+    const error = new Error('The pin list id is not valid');
+    error.status = 400;
+    throw error;
+  }
   const directoryPath = normalizeDirectoryPath(directory);
   if (!directoryPath || !fs.existsSync(directoryPath)) {
     const error = new Error('The worktree folder does not exist');
@@ -5060,10 +5091,12 @@ export async function setWorktreePinned(directory, pinned, now = Date.now()) {
     });
   const branch = String(head.stdout || '').trim();
   const key = `branch.${branch}.openchamberPinned`;
-  const current = Number(await readGitConfigValue(directoryPath, key));
-  const isPinned = Number.isFinite(current) && current > 0;
-  if (isPinned !== pinned) {
-    await writeGitConfigValue(directoryPath, key, pinned ? String(now) : '');
+  const current = parseBranchPin(await readGitConfigValue(directoryPath, key));
+  // Moving a pin to another list keeps the time it was first pinned.
+  const next = pinned ? [String(current?.pinnedAt ?? now), ...(list ? [list] : [])].join(' ') : '';
+  const stored = current ? [String(current.pinnedAt), ...(current.list ? [current.list] : [])].join(' ') : '';
+  if (next !== stored) {
+    await writeGitConfigValue(directoryPath, key, next);
     void publishWorktreeTopologyChange(directoryPath);
   }
   return { pinned, branch };
@@ -6215,6 +6248,19 @@ const notBootstrappedHere = () => createWorktreeBootstrapState(
   WORKTREE_BOOTSTRAP_PHASE_SETUP_READY,
 );
 
+// A persisted record becomes this process's state. One left `pending` with no
+// live bootstrap behind it is a crash mid-population and is inspected.
+const adoptPersistedBootstrapState = async (key, persisted, bootstrapStore) => {
+  if (persisted.status !== WORKTREE_BOOTSTRAP_PENDING || await hasActiveWorktreeBootstrap(key)) {
+    worktreeBootstrapState.set(key, persisted);
+    return persisted;
+  }
+  const blocker = await inspectWorktreeBootstrapRecovery(key);
+  worktreeBootstrapState.set(key, blocker);
+  await bootstrapStore.write(key, blocker);
+  return blocker;
+};
+
 export async function getWorktreeBootstrapStatus(directory, { bootstrapStore } = {}) {
   const key = await toCanonicalBootstrapStateKey(directory);
   if (!key) {
@@ -6227,14 +6273,7 @@ export async function getWorktreeBootstrapStatus(directory, { bootstrapStore } =
       if (!persisted) {
         return worktreeBootstrapState.get(key) ?? notBootstrappedHere();
       }
-      if (persisted.status !== WORKTREE_BOOTSTRAP_PENDING || await hasActiveWorktreeBootstrap(key)) {
-        worktreeBootstrapState.set(key, persisted);
-        return persisted;
-      }
-      const blocker = await inspectWorktreeBootstrapRecovery(key);
-      worktreeBootstrapState.set(key, blocker);
-      await bootstrapStore.write(key, blocker);
-      return blocker;
+      return await adoptPersistedBootstrapState(key, persisted, bootstrapStore);
     } catch {
       const blocker = await inspectWorktreeBootstrapRecovery(key);
       worktreeBootstrapState.set(key, blocker);
@@ -6244,9 +6283,56 @@ export async function getWorktreeBootstrapStatus(directory, { bootstrapStore } =
   return worktreeBootstrapState.get(key) ?? notBootstrappedHere();
 }
 
-export async function completeWorktreeCheckoutHydration(directory, { bootstrapStore } = {}) {
+const worktreeBootstrapGateLoads = new Map();
+
+/**
+ * The state the OpenCode proxy's checkout gate reads on every request. It
+ * reads memory, since the store takes a cross-process file lock per read. The
+ * first read of a folder in this process loads its persisted record, so a
+ * checkout that failed before a restart stays closed from the first request
+ * instead of only after something reads its status with the store. A store
+ * that cannot be read leaves the folder to memory, as before the load, and is
+ * not read again for it: failing closed there would close every folder.
+ */
+export async function getWorktreeBootstrapGateStatus(directory, { bootstrapStore } = {}) {
+  const key = await toCanonicalBootstrapStateKey(directory);
+  if (!key) {
+    throw new Error('Worktree directory is required');
+  }
+  if (bootstrapStore && !worktreeBootstrapState.has(key)) {
+    let load = worktreeBootstrapGateLoads.get(key);
+    if (!load) {
+      load = (async () => {
+        try {
+          const persisted = await bootstrapStore.read(key);
+          // A bootstrap that began meanwhile is newer than the file.
+          if (persisted && !worktreeBootstrapState.has(key)) {
+            await adoptPersistedBootstrapState(key, persisted, bootstrapStore);
+          }
+        } catch (error) {
+          console.warn(`[git] Could not read the saved setup state of ${key}:`, error?.message ?? error);
+        }
+      })();
+      worktreeBootstrapGateLoads.set(key, load);
+    }
+    await load;
+  }
+  return worktreeBootstrapState.get(key) ?? notBootstrappedHere();
+}
+
+/**
+ * Marks a failed checkout ready once a repair hydrated it. While the record
+ * still says failed, the OpenCode proxy keeps the folder closed, so whatever
+ * OpenCode holds for it is dropped first (`disposeInstance`, best-effort) and
+ * the first request after the repair opens the folder complete.
+ */
+export async function completeWorktreeCheckoutHydration(directory, { bootstrapStore, disposeInstance } = {}) {
   const key = await toCanonicalBootstrapStateKey(directory);
   if (!key) throw new Error('Worktree directory is required');
+  const recorded = bootstrapStore ? await bootstrapStore.read(key) : worktreeBootstrapState.get(key);
+  if (recorded?.status === WORKTREE_BOOTSTRAP_FAILED && recorded.hydration) {
+    await disposeWorktreeInstanceBestEffort(disposeInstance, directory);
+  }
   if (bootstrapStore) {
     const completed = await bootstrapStore.completeHydration(key);
     if (completed) worktreeBootstrapState.set(key, completed);
@@ -6264,9 +6350,9 @@ export async function completeWorktreeCheckoutHydration(directory, { bootstrapSt
 }
 
 /**
- * Releases the OpenCode instance that served a removed worktree. The owning
- * runtime injects `disposeInstance`; disposal is best-effort, so a failure is
- * warned about and never fails or rolls back the removal.
+ * Releases the OpenCode instance that served a removed or repaired worktree.
+ * The owning runtime injects `disposeInstance`; disposal is best-effort, so a
+ * failure is warned about and never fails or rolls back the caller's work.
  */
 const disposeWorktreeInstanceBestEffort = async (disposeInstance, worktreeDirectory) => {
   if (!disposeInstance) {
@@ -6276,7 +6362,7 @@ const disposeWorktreeInstanceBestEffort = async (disposeInstance, worktreeDirect
     await disposeInstance(worktreeDirectory);
   } catch (error) {
     console.warn(
-      `Failed to dispose the OpenCode instance for removed worktree ${worktreeDirectory}:`,
+      `Failed to dispose the OpenCode instance for worktree ${worktreeDirectory}:`,
       error instanceof Error ? error.message : String(error)
     );
   }
@@ -6513,14 +6599,18 @@ const replaceWorktreeGitDirectoryLink = async (primaryWorktree, worktreePath) =>
 
 // Resolves true when git removed the worktree, false when git dropped the
 // registration but left the folder behind (the caller removes it as an orphan).
-// A busy folder is released again before the next attempt, git's or the
-// orphan removal's: a request that reached OpenCode after the first release
-// has started the folder again.
+// Once git has started deleting it drops the registration, whatever stopped it:
+// a busy folder, or a path longer than git can handle even with core.longpaths.
+// A refusal before any deletion (a locked worktree) exits 128 like every git
+// `die`, and leaves the folder untouched. A busy folder is released again
+// before the next attempt, git's or the orphan removal's: a request that
+// reached OpenCode after the first release has started the folder again.
 const removeGitWorktreeWhenFree = async (primaryWorktree, worktreePath, targetCanonical, releaseInstance) => {
   for (let attempt = 0; ; attempt += 1) {
-    const result = await runGitCommand(primaryWorktree, ['worktree', 'remove', '--force', worktreePath]);
+    const result = await runGitCommand(primaryWorktree, ['-c', 'core.longpaths=true', 'worktree', 'remove', '--force', worktreePath]);
     if (result.success) return true;
-    if (!isWorktreeBusyError(result.message)) {
+    const busy = isWorktreeBusyError(result.message);
+    if (!busy && result.exitCode === 128) {
       throw new Error(result.message || 'Failed to remove git worktree');
     }
     const stillRegistered = await (async () => {
@@ -6532,6 +6622,9 @@ const removeGitWorktreeWhenFree = async (primaryWorktree, worktreePath, targetCa
     if (!stillRegistered) {
       await releaseInstance();
       return false;
+    }
+    if (!busy) {
+      throw new Error(result.message || 'Failed to remove git worktree');
     }
     const delay = WORKTREE_BUSY_RETRY_DELAYS_MS[attempt];
     if (delay === undefined) throw new Error(WORKTREE_BUSY_MESSAGE);
@@ -6829,10 +6922,12 @@ const archiveRegisteredWorktree = async ({ directory, id, worktreeDirectory, tar
   // treat the folder as a leftover and delete it without a trace in git.
   if (!(await isRegisteredWorktree(context.primaryWorktree, targetCanonical))) throw new Error('Not a worktree of this repository');
   // A new worktree's files land in the background: a snapshot taken before
-  // they do records every missing file as deleted.
+  // they do records every missing file as deleted. A failure while fetching
+  // submodules or LFS objects comes after every file landed, so that worktree
+  // archives like any other.
   await waitForActiveWorktreeBootstrap(worktreeDirectory);
   const bootstrap = worktreeBootstrapState.get(await toCanonicalBootstrapStateKey(worktreeDirectory));
-  if (bootstrap?.status === WORKTREE_BOOTSTRAP_FAILED) {
+  if (bootstrap?.status === WORKTREE_BOOTSTRAP_FAILED && !bootstrap.hydration) {
     throw new Error('The worktree did not finish setting up, so it cannot be archived. Delete it instead.');
   }
 
@@ -6872,8 +6967,11 @@ const archiveRegisteredWorktree = async ({ directory, id, worktreeDirectory, tar
       await runGitCommand(context.primaryWorktree, ['update-ref', '-d', ref, snapshot.commit]);
       throw error;
     }
+    const reason = error instanceof Error ? error.message : String(error);
     throw worktreeArchiveError(
-      `The worktree folder could not be removed completely (${error instanceof Error ? error.message : String(error)}). It is archived; restore it once nothing holds the folder.`,
+      reason === WORKTREE_BUSY_MESSAGE
+        ? `The worktree folder could not be removed completely (${reason}). It is archived; restore it once nothing holds the folder.`
+        : `The worktree is archived, but its folder ${worktreeDirectory} could not be deleted completely: ${reason}`,
       'WORKTREE_ARCHIVE_PARTIAL',
     );
   }
@@ -6960,6 +7058,13 @@ export async function deleteBranch(directory, branch, options = {}) {
     const branchName = branch.startsWith('refs/heads/')
       ? branch.substring('refs/heads/'.length)
       : branch;
+    if (options.ifExists) {
+      const found = await runGitCommand(directory, ['show-ref', '--verify', '--quiet', `refs/heads/${branchName}`], { timeoutMs: GIT_PROBE_TIMEOUT_MS });
+      if (!found.success) {
+        if (found.exitCode === 1 && !found.stderr.trim()) return { success: true };
+        throw new Error(found.message || 'Failed to check branch before deletion');
+      }
+    }
     const args = ['branch', options.force ? '-D' : '-d', branchName];
     await git.raw(args);
     return { success: true };
@@ -7081,6 +7186,15 @@ export async function getLog(directory, options = {}) {
 
     const resolvedFrom = await resolveBaseRefForLog(options.from, checkRef);
 
+    if (options.to) {
+      // Inspect the exit status: Git errors are localized and simple-git treats silent exit 1 as success.
+      const probe = await runGitCommand(repoRoot, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${options.to}^{commit}`]);
+      if (!probe.success && probe.exitCode === 1) {
+        throw Object.assign(new Error(`Revision '${options.to}' not found`), { code: 'revision_not_found' });
+      }
+      if (!probe.success) throw new Error(probe.message || 'Failed to verify revision');
+    }
+
     // simple-git's `to` alone means HEAD..to, which is empty for the current
     // branch. A single requested ref means its reachable history instead.
     const baseLog = options.to && !resolvedFrom
@@ -7172,7 +7286,7 @@ export async function getLog(directory, options = {}) {
       total: baseLog.total
     };
   } catch (error) {
-    console.error('Failed to get log:', error);
+    if (error?.code !== 'revision_not_found') console.error('Failed to get log:', error);
     throw error;
   }
 }

@@ -1,5 +1,4 @@
 import React from 'react';
-import { ScrollShadow } from '@/components/ui/ScrollShadow';
 import type { SessionProjectListProps } from '@/components/session/sidebar/projects/SessionProjectScroller';
 import {
   applyShowControl,
@@ -7,6 +6,7 @@ import {
   grantGroupAccess,
   retryGroupStatus,
   toggleActivityZone,
+  toggleProjectsCaption,
 } from '@/components/session/sidebar/projects/sessionProjectListActions';
 import { SessionSidebarRows } from '@/components/session/sidebar/SessionSidebarRows';
 import type { SessionSidebarRow } from '@/components/session/sidebar/sessionSidebarRowModel';
@@ -17,11 +17,12 @@ import { useUIStore } from '@/stores/useUIStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useChildStoreManager } from '@/sync/sync-context';
 import { MobileSessionRow } from './MobileSessionRow';
-import { MobileFolderRow, MobileGroupHeader, MobileProjectHeader, MobileStatusRow, MobileZoneHeader } from './MobileSectionRows';
+import { MobileFolderRow, MobileGroupHeader, MobileProjectHeader, MobileProjectsCaption, MobileStatusRow, MobileZoneHeader } from './MobileSectionRows';
 import { MobileDraftRow, MobileRunRow, MobileWorktreeRow } from './MobileWorkRows';
 import { MOBILE_TREE_GEOMETRY } from './mobileSidebarGeometry';
 import { useMobileSidebarActions, useMobileSidebarRowsStore } from './mobileSidebarState';
 import { MobileShowControl } from './mobileRowParts';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 
 // Rows that line up with gutterless two-line rows start this far in.
 const FLAT_TEXT_INSET_PX = 12;
@@ -104,6 +105,8 @@ export const MobileSessionList: React.FC<SessionProjectListProps> = ({ model, vi
     switch (row.kind) {
       case 'activity-header':
         return <MobileZoneHeader row={row} onToggle={() => toggleActivityZone(row, { model, actions })} />;
+      case 'caption':
+        return <MobileProjectsCaption row={row} onToggle={() => toggleProjectsCaption(row, { model })} />;
       case 'project-header': {
         const project = row.section.project;
         return <MobileProjectHeader
@@ -150,7 +153,7 @@ export const MobileSessionList: React.FC<SessionProjectListProps> = ({ model, vi
         if (row.emptyKind === 'sidebar') return model.emptyState;
         if (row.emptyKind === 'search') return model.searchEmptyState;
         return <div className="py-1 typography-micro text-muted-foreground" style={{ paddingInlineStart: geometry.textLeft(row.depth ?? 0) }}>
-          {t('sessions.sidebar.group.empty.noArchivedSessions')}
+          {row.emptyKind === 'section' ? t('sessions.sidebar.sections.empty') : t('sessions.sidebar.group.empty.noArchivedSessions')}
         </div>;
     }
   }, [actions, childStores, geometry, model, phone, t, view.homeDirectory]);
@@ -159,7 +162,7 @@ export const MobileSessionList: React.FC<SessionProjectListProps> = ({ model, vi
     // Inset from the screen's edges by the drawer's one gutter (12px, as the
     // header's buttons, the search field and the footer): rows are rounded
     // tiles, not bands across the screen.
-    <ScrollShadow ref={setScrollElement} className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 [overflow-anchor:none]">
+    <ScrollableOverlay ref={setScrollElement} outerClassName="min-h-0 flex-1" className="px-3 pb-4 [overflow-anchor:none]" useScrollShadow disableHorizontal>
       <SessionSidebarRows
         model={model.rowModel}
         scrollElement={scrollElement}
@@ -169,6 +172,6 @@ export const MobileSessionList: React.FC<SessionProjectListProps> = ({ model, vi
         guideSlotStartPx={geometry.base}
         scrollRequest={scrollRequest}
       />
-    </ScrollShadow>
+    </ScrollableOverlay>
   );
 };

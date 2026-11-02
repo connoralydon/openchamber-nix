@@ -44,6 +44,7 @@ import { useInputStore } from '@/sync/input-store';
 import { GlassPopupMotion } from './GlassPopupMotion';
 import { fileWithDiffCommentOrigin } from '@/lib/diffCommentOrigin';
 import { isWholeFileComment } from '@/components/comments/wholeFileComment';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 
 interface ComposerContextChipsProps {
     draftTarget: InlineCommentDraftTarget | null;
@@ -431,7 +432,9 @@ function ComposerContextChipsView({ draftTarget, colors, previewHost }: Composer
                 <div
                     key="context-preview"
                     ref={previewRef}
-                    className="absolute bottom-full inset-s-0 z-30 mb-1.5 w-full max-w-[480px]"
+                    // A menu over the composer, so it sits above the docks that
+                    // share this band (btw, permission, form) at z-30.
+                    className="absolute bottom-full inset-s-0 z-50 mb-1.5 w-full max-w-[480px]"
                     onMouseEnter={cancelClose}
                     onMouseLeave={scheduleClose}
                 >
@@ -442,9 +445,10 @@ function ComposerContextChipsView({ draftTarget, colors, previewHost }: Composer
                     className="oc-glass-popover oc-glass-floating overflow-hidden rounded-xl"
                     style={previewMaxHeight === null ? undefined : { maxHeight: previewMaxHeight }}
                 >
-                    <div
-                        className="divide-y divide-[var(--interactive-border)] overflow-y-auto"
-                        style={previewMaxHeight === null ? undefined : { maxHeight: Math.max(0, previewMaxHeight - 2) }}
+                    <ScrollableOverlay
+                        outerStyle={previewMaxHeight === null ? undefined : { maxHeight: Math.max(0, previewMaxHeight - 2) }}
+                        className="divide-y divide-[var(--interactive-border)]"
+                        disableHorizontal
                     >
                         {openGroup.drafts.map((draft, index) => (
                             <DraftPreviewEntry
@@ -468,7 +472,7 @@ function ComposerContextChipsView({ draftTarget, colors, previewHost }: Composer
                                 attachmentFilenames={attachmentFilenames}
                             />
                         ))}
-                    </div>
+                    </ScrollableOverlay>
                 </div>
                 </GlassPopupMotion>
                 </div>
@@ -483,7 +487,7 @@ function ComposerContextChipsView({ draftTarget, colors, previewHost }: Composer
                     // Same chip shape as attached files and linked
                     // references; the inline minimums opt out of the
                     // mobile 36px button floor so the row stays even.
-                    className="inline-flex h-7 max-w-full min-w-0 items-center gap-1.5 rounded-lg border border-border/80 bg-background px-2 text-start text-xs transition-opacity hover:opacity-80"
+                    className="inline-flex h-7 max-w-full min-w-0 items-center gap-1.5 rounded-lg border border-edge bg-background px-2 text-start text-xs transition-opacity hover:opacity-80"
                     style={{ minHeight: 0, minWidth: 0 }}
                     onMouseEnter={() => {
                         cancelClose();

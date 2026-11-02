@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { adoptRelayTunnel, deactivateRelayTunnel } from './relay/runtime-tunnel';
 import type { RelayTunnelClient } from './relay/tunnel-client';
-import { setRuntimeBearerToken } from './runtime-auth';
+import { setRuntimeBearerToken, setRuntimeExtraHeaders } from './runtime-auth';
 
 class MockEventSource {
   static CLOSED = 2;
@@ -35,6 +35,7 @@ describe('openchamber events', () => {
   afterEach(() => {
     deactivateRelayTunnel();
     setRuntimeBearerToken(null);
+    setRuntimeExtraHeaders(null);
     Reflect.deleteProperty(globalThis, 'window');
     Reflect.deleteProperty(globalThis, 'EventSource');
   });
@@ -51,6 +52,40 @@ describe('openchamber events', () => {
     } finally {
       unsubscribe();
     }
+  });
+
+  test('native mobile sends proxy headers on the HTTP event stream and aborts on unsubscribe', async () => {
+    Object.assign(window, { Capacitor: { isNativePlatform: () => true } });
+    setRuntimeExtraHeaders({ 'X-Proxy': 'fixture-secret' });
+    setRuntimeBearerToken('fixture-token');
+    let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let streamSignal: AbortSignal | null | undefined;
+    const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+      expect(new Headers(init?.headers).get('X-Proxy')).toBe('fixture-secret');
+      expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer fixture-token');
+      streamSignal = init?.signal;
+      return new Response(new ReadableStream<Uint8Array>({
+        start(value) {
+          controller = value;
+          init?.signal?.addEventListener('abort', () => value.error(new DOMException('Aborted', 'AbortError')), { once: true });
+        },
+      }), { headers: { 'content-type': 'text/event-stream' } });
+    });
+    const { subscribeOpenchamberEvents } = await import('./openchamberEvents');
+    const events: string[] = [];
+    const unsubscribe = subscribeOpenchamberEvents((event) => events.push(event.type));
+    try {
+      for (let i = 0; i < 20 && !controller; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(MockEventSource.instances).toHaveLength(0);
+      expect(controller).toBeDefined();
+      controller?.enqueue(new TextEncoder().encode('data: {"type":"openchamber:event-stream-ready"}\n\n'));
+      for (let i = 0; i < 20 && !events.length; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(events).toEqual(['event-stream-ready']);
+    } finally {
+      unsubscribe();
+      fetchSpy.mockRestore();
+    }
+    expect(streamSignal?.aborted).toBe(true);
   });
 
   test('desktop browser-capable events cross the active relay as streamed HTTP, not native EventSource', async () => {
@@ -129,6 +164,27 @@ describe('openchamber events', () => {
       expect(MockEventSource.instances[1].url).toContain('browser=1');
     } finally {
       drivingUnsubscribe();
+    }
+  });
+
+  test('preserves scheduled task dispatch and legacy outcome statuses', async () => {
+    const { subscribeOpenchamberEvents } = await import('./openchamberEvents');
+    const statuses: string[] = [];
+    const unsubscribe = subscribeOpenchamberEvents((event) => {
+      if (event.type === 'scheduled-task-ran') statuses.push(event.status);
+    });
+    try {
+      for (const status of ['running', 'sent', 'success', 'error']) {
+        MockEventSource.instances[0].onmessage?.({
+          data: JSON.stringify({
+            type: 'openchamber:scheduled-task-ran',
+            properties: { projectId: 'project_1', taskId: 'task_1', ranAt: 123, status },
+          }),
+        });
+      }
+      expect(statuses).toEqual(['running', 'sent', 'success', 'error']);
+    } finally {
+      unsubscribe();
     }
   });
 

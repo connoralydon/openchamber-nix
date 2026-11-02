@@ -39,6 +39,10 @@ import { DiagnosticDialogAvailableContext } from '@/lib/diagnostics/dialog-avail
 
 const loadSettingsWindow = () => import('@/components/views/SettingsWindow').then(m => m.SettingsWindow);
 
+// Live motion knobs, development builds only: the import is dropped from
+// production bundles.
+const MotionTuningPanel = import.meta.env.DEV ? React.lazy(() => import('@/components/dev/MotionTuningPanel')) : null;
+
 // Surfaces that replace or cover the chat load the first time they open, so
 // the startup bundle carries only the chat. Each reads its own open state from
 // the store once mounted, and stays mounted after its first open.
@@ -265,6 +269,9 @@ export const MainLayout: React.FC = () => {
                         open={isSettingsDialogOpen}
                         onOpenChange={setSettingsDialogOpen}
                     />
+                ) : null}
+                {MotionTuningPanel ? (
+                    <React.Suspense fallback={null}><MotionTuningPanel /></React.Suspense>
                 ) : null}
             </div>
             </ProjectActionsProvider>

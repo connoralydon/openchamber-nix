@@ -16,7 +16,9 @@ performs its own fresh safety reads through RuntimeAPIs, outside this UI owner.
   complete `read` as stale, along with the original Error and its metadata.
 - A read of a worktree whose checkout is still running waits for its `git-ready`
   phase first and stays `loading` meanwhile. Reading earlier fails, and that
-  error would stay until a manual retry. A failed checkout settles as `error`.
+  error would stay until a manual retry. A failed checkout is read at once: it
+  is still a repository, and its binding is what the recovery controls
+  (Remote, Download again) need to repair it.
 - `contexts` grants provider-read demand only while the owner read is ready and
   the selected association's readiness is `ready` with a matching approved fetch
   fingerprint. Aggregate `needs-attention` does not suppress healthy siblings.

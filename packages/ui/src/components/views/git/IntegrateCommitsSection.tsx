@@ -341,7 +341,7 @@ export const IntegrateCommitsSection: React.FC<{
   }
 
   const containerClassName = 'border-0 bg-transparent rounded-none';
-  const headerClassName = 'px-0 py-3 border-b border-border/40 flex items-center justify-between gap-2';
+  const headerClassName = 'px-0 py-3 border-b border-edge-muted flex items-center justify-between gap-2';
   const bodyClassName = 'flex flex-col gap-3 py-3';
 
   return (

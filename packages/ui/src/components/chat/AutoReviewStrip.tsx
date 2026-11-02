@@ -9,6 +9,7 @@ import { useI18n, type I18nKey } from '@/lib/i18n';
 import { selectAutoReviewRun, useAutoReviewStore, type AutoReviewRun } from '@/stores/useAutoReviewStore';
 import { useUIStore } from '@/stores/useUIStore';
 import { useChatSessionSelection } from './chatColumnSession';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 
 type SettledStatus = Exclude<AutoReviewRun['status'], 'running'>;
 
@@ -77,7 +78,7 @@ export const AutoReviewStrip = memo(() => {
       ? t('chat.autoReview.status.waitingForReviewer')
       : t('chat.autoReview.status.waitingForImplementer');
     return (
-      <div role="status" className="flex oc-composer-row min-w-0 items-center gap-2 border-b border-border/60 ps-3 pe-1.5">
+      <div role="status" className="flex oc-composer-row min-w-0 items-center gap-2 border-b border-edge ps-3 pe-1.5">
         <Spinner className="size-3.5 text-muted-foreground" aria-hidden="true" />
         <span className="min-w-0 flex-1 truncate text-sm text-foreground">
           {t('chat.autoReview.title')}
@@ -110,7 +111,7 @@ export const AutoReviewStrip = memo(() => {
   const runId = `${run.originalSessionID}:${run.startedAt}`;
   const unfolded = Boolean(run.dispute) && unfoldedRun === runId;
   return (
-    <div role="status" className="border-b border-border/60" title={run.error}>
+    <div role="status" className="border-b border-edge" title={run.error}>
       <div className="flex oc-composer-row min-w-0 items-center gap-2 ps-3 pe-1.5">
         <Icon name={result.icon} className={`size-3.5 flex-shrink-0 ${result.className}`} aria-hidden="true" />
         {run.dispute ? (
@@ -141,9 +142,9 @@ export const AutoReviewStrip = memo(() => {
         </Button>
       </div>
       {unfolded ? (
-        <div id={disputeId} className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words ps-8 pe-3 pb-2 text-sm text-muted-foreground">
+        <ScrollableOverlay id={disputeId} outerClassName="max-h-48" className="whitespace-pre-wrap break-words ps-8 pe-3 pb-2 text-sm text-muted-foreground" disableHorizontal>
           {run.dispute}
-        </div>
+        </ScrollableOverlay>
       ) : null}
     </div>
   );

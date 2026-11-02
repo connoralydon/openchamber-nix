@@ -205,7 +205,7 @@ export const TodosSection: React.FC<{
         onSubmit={handleAddTodo}
       />
 
-      <div className="rounded-lg border border-border/60 bg-background/40">
+      <div className="rounded-lg border border-edge bg-background/40">
         {visibleTodos.length === 0 ? (
           <p className="px-3 py-3 typography-meta text-muted-foreground">
             {query.trim()
@@ -222,7 +222,7 @@ export const TodosSection: React.FC<{
               items={visibleTodos.map((todo) => todo.id)}
               strategy={verticalListSortingStrategy}
             >
-              <ul className="divide-y divide-border/50">
+              <ul className="divide-y divide-edge">
                 {visibleTodos.map((todo) => {
                   const isExpandedTodo = expandedTodoIds.has(todo.id);
                   return (

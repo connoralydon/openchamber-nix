@@ -150,7 +150,7 @@ mock.module('@/components/ui/sortable-tabs-strip', () => ({
     )),
   ),
 }));
-mock.module('@/lib/i18n', () => ({ useI18n: () => i18n }));
+mock.module('@/lib/i18n', () => ({ useI18n: () => i18n, isRightToLeft: () => false }));
 
 const { TerminalView } = await import('./TerminalView');
 
@@ -534,6 +534,43 @@ describe('TerminalView project action tab indicator', () => {
     expect(host.textContent).not.toContain('terminalView.error.connectionFailed');
     expect(store.getActiveTab('/repo')?.terminalSessionId).toBeNull();
     expect(store.getActiveTab('/repo')?.lifecycle).toBe('exited');
+  });
+
+  test('a terminal that keeps failing to reconnect shows the error and Try again until it is back', async () => {
+    const store = useTerminalStore.getState();
+    const tab = store.getDirectoryState('/repo')!.tabs.find((entry) => entry.label === 'Interactive')!;
+    store.setTabSessionId('/repo', tab.id, 'srv-Interactive');
+    store.setActiveTab('/repo', tab.id);
+    let handlers: TerminalHandlers | null = null;
+    connectBehavior = (_sessionId, next) => {
+      // A later subscription replays the snapshot another holder of the session cached.
+      if (handlers) next.onEvent({ type: 'snapshot', sequence: 0, data: '', status: 'running' });
+      handlers = next;
+      return { close: () => undefined };
+    };
+    await act(async () => root.render(React.createElement(TerminalView, { visible: true })));
+    await flushEffects();
+    const emit = async (attempt: number) => act(async () => handlers!.onEvent({ type: 'reconnecting', attempt, maxAttempts: Number.POSITIVE_INFINITY }));
+    const tryAgainButton = () => Array.from(host.querySelectorAll('button')).find((button) => button.textContent === 'terminalView.actions.tryAgain');
+
+    // A short outage recovers within a few attempts and shows nothing.
+    for (let attempt = 1; attempt <= 4; attempt += 1) await emit(attempt);
+    expect(host.textContent).not.toContain('terminalView.error.cannotConnect');
+
+    await emit(5);
+    expect(host.textContent).toContain('terminalView.error.cannotConnect');
+    expect(tryAgainButton()).toBeDefined();
+
+    await act(async () => tryAgainButton()!.click());
+    expect(connectCalls).toEqual(['srv-Interactive', 'srv-Interactive']);
+    expect(host.textContent).toContain('terminalView.error.cannotConnect');
+    // The retry dials once and fails: its count starts over, and the error stays.
+    await act(async () => handlers!.onError?.(new Error('Terminal WebSocket closed'), false));
+    await emit(1);
+    expect(host.textContent).toContain('terminalView.error.cannotConnect');
+
+    await act(async () => handlers!.onEvent({ type: 'snapshot', sequence: 1, data: '$ ', status: 'running' }));
+    expect(host.textContent).not.toContain('terminalView.error.cannotConnect');
   });
 
   test('would fail if revisit attach skipped the active running project-action snapshot restore', async () => {

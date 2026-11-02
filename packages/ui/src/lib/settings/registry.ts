@@ -36,6 +36,7 @@ import { useMessageQueueStore } from '@/stores/messageQueueStore';
 import { useSessionDisplayStore } from '@/stores/useSessionDisplayStore';
 import { useUIStore, type FileEditorKeymap, type LargeTextPasteBehavior } from '@/stores/useUIStore';
 import { isSessionGoalMaxAutoTurns } from '@/lib/sessionGoalTurnLimit';
+import { hiddenSidebarSectionsSchema, sidebarPinListsSchema, sidebarSectionsSchema } from '@/lib/sidebarSections';
 import { z } from 'zod';
 import {
   fromSchema,
@@ -49,6 +50,7 @@ import {
   parseGuarded,
   parseIntegerAtLeast,
   parseIntegerInRange,
+  parseLastUsedEfforts,
   parseManagedRemoteTunnelPresetTokens,
   parseManagedRemoteTunnelPresets,
   parseModelRefs,
@@ -236,6 +238,9 @@ export const SETTINGS_REGISTRY = {
   lastDirectory: field({ scope: 'instance', adopt: 'bootstrap-only', parse: parseNonEmptyString }),
   homeDirectory: field({ scope: 'instance', parse: parseNonEmptyString }),
   opencodeBinary: field({ scope: 'instance', parse: parseTrimmedString }),
+  // Where an npm-installed server takes its updates from (Settings → About in
+  // its browser page); the desktop app keeps its own `desktopUpdateChannel`.
+  serverUpdateChannel: field({ scope: 'instance', surfaces: ['web'], parse: parseOneOf(['stable', 'canary']) }),
   projects: field<ProjectEntry[]>({ scope: 'instance', parse: parseProjects }),
   activeProjectId: field({ scope: 'instance', adopt: 'bootstrap-only', parse: parseNonEmptyString }),
   securityScopedBookmarks: field({ scope: 'instance', surfaces: ['desktop'], parse: parseStringList }),
@@ -243,6 +248,7 @@ export const SETTINGS_REGISTRY = {
   desktopLanAccessEnabled: field({ scope: 'instance', surfaces: ['desktop'], parse: parseBoolean }),
   desktopKeepAwakeEnabled: field({ scope: 'instance', surfaces: ['desktop'], parse: parseBoolean }),
   desktopMinimizeToTrayEnabled: field({ scope: 'instance', surfaces: ['desktop'], parse: parseBoolean }),
+  desktopUpdateChannel: field({ scope: 'instance', surfaces: ['desktop'], parse: parseOneOf(['stable', 'canary']) }),
   desktopMacMenuBarEnabled: field({ scope: 'instance', surfaces: ['desktop'], parse: parseBoolean }),
   desktopLinuxNativeFrame: field({ scope: 'instance', surfaces: ['desktop'], parse: parseBoolean }),
   // Write-only: the desktop network page learns whether one is set from
@@ -299,6 +305,7 @@ export const SETTINGS_REGISTRY = {
   agentImageToolEnabled: field({ scope: 'instance', parse: parseBoolean, ui: uiStore('agentImageToolEnabled', (v) => useUIStore.getState().setAgentImageToolEnabled(v)) }),
   // `provider/model` of an image model; the server checks the shape.
   agentImageModel: field({ scope: 'instance', parse: parseNonEmptyString, ui: uiStore('agentImageModel', (v) => useUIStore.getState().setAgentImageModel(v)) }),
+  agentSecretToolEnabled: field({ scope: 'instance', parse: parseBoolean, ui: uiStore('agentSecretToolEnabled', (v) => useUIStore.getState().setAgentSecretToolEnabled(v)) }),
   agentToolsCodeMode: field({ scope: 'instance', parse: parseBoolean, ui: uiStore('agentToolsCodeMode', (v) => useUIStore.getState().setAgentToolsCodeMode(v)) }),
   agentMemoryToolEnabled: field({ scope: 'instance', parse: parseBoolean, ui: uiStore('agentMemoryToolEnabled', (v) => useUIStore.getState().setAgentMemoryToolEnabled(v)) }),
   agentKnowledgeToolEnabled: field({ scope: 'instance', parse: parseBoolean, ui: uiStore('agentKnowledgeToolEnabled', (v) => useUIStore.getState().setAgentKnowledgeToolEnabled(v)) }),
@@ -324,7 +331,7 @@ export const SETTINGS_REGISTRY = {
     parse: parseBoolean,
     ui: uiStore('agentMemoryFeatureAvailable', (v) => useUIStore.getState().setAgentMemoryFeatureAvailable(v), { autoSave: false }),
   }),
-  // Server-owned: whether this build has agent workflows (`OPENCHAMBER_WORKFLOWS_ENABLE`).
+  // Server-owned: whether an OpenChamber server backs agent workflows here.
   agentWorkflowFeatureAvailable: field({
     scope: 'instance',
     computed: true,
@@ -345,6 +352,7 @@ export const SETTINGS_REGISTRY = {
     ui: uiStore('routingFeatureAvailable', (v) => useUIStore.getState().setRoutingFeatureAvailable(v), { autoSave: false }),
   }),
   openCodeUpdateToastDismissedVersion: field({ scope: 'instance', parse: parseTrimmedStringUpTo(128) }),
+  openCodeProjectImportCompleted: field({ scope: 'instance', parse: parseBoolean }),
   autoDeleteEnabled: field({ scope: 'instance', parse: parseBoolean, ui: uiStore('autoDeleteEnabled', (v) => useUIStore.getState().setAutoDeleteEnabled(v)) }),
   autoDeleteAfterDays: field({ scope: 'instance', parse: parseIntegerInRange(1, 365), ui: uiStore('autoDeleteAfterDays', (v) => useUIStore.getState().setAutoDeleteAfterDays(v)) }),
   // Apply scope before action so leaving archived-only mode can restore an incoming archive choice.
@@ -356,8 +364,10 @@ export const SETTINGS_REGISTRY = {
   terminalLoginShells: field({ scope: 'instance', parse: parseTerminalShells(isTerminalShell), ui: uiStore('terminalLoginShells', (v) => useUIStore.getState().setTerminalLoginShells(v)) }),
   openInAppId: field({ scope: 'instance', parse: parseNonEmptyTrimmedString }),
   dictationEnabled: field({ scope: 'profile', parse: parseBoolean, ui: configField('dictationEnabled') }),
+  dictationAutoSend: field({ scope: 'profile', parse: parseBoolean, ui: configField('dictationAutoSend') }),
   sttProvider: field({ scope: 'instance', parse: parseSttProvider, ui: configField('sttProvider') }),
   sttServerUrl: field({ scope: 'instance', parse: parseTrimmedStringUpTo(2048), ui: configField('sttServerUrl') }),
+  sttEndpointPath: field({ scope: 'instance', parse: fromSchema(z.string().trim().max(1024)), ui: configField('sttEndpointPath') }),
   sttModel: field({ scope: 'instance', parse: parseTrimmedStringUpTo(256), ui: configField('sttModel') }),
   sttLocalModel: field({ scope: 'instance', parse: parseTrimmedStringUpTo(256), ui: configField('sttLocalModel') }),
   sttLanguage: field({ scope: 'profile', parse: parseTrimmedStringUpTo(64), ui: configField('sttLanguage') }),
@@ -393,6 +403,12 @@ export const SETTINGS_REGISTRY = {
   sidebarShowPinnedSection: field({ scope: 'profile', perSurface: true, parse: parseBoolean, ui: sessionDisplayField('showPinnedSection') }),
   sidebarDetailedZoneRows: field({ scope: 'profile', perSurface: true, parse: parseBoolean, ui: sessionDisplayField('detailedZoneRows') }),
   sidebarWorktreeNameByBranch: field({ scope: 'profile', parse: parseBoolean, ui: sessionDisplayField('worktreeNameByBranch') }),
+  // The sections and pin lists are one arrangement for every surface; which of
+  // the user's sections a surface shows is its own. They are written through
+  // the store's setters, which record the instance they came from.
+  sidebarSections: field({ scope: 'profile', parse: fromSchema(sidebarSectionsSchema), ui: { read: () => useSessionDisplayStore.getState().sections, write: (value) => useSessionDisplayStore.getState().setSections(value), autoSave: false } }),
+  sidebarPinLists: field({ scope: 'profile', parse: fromSchema(sidebarPinListsSchema), ui: { read: () => useSessionDisplayStore.getState().pinLists, write: (value) => useSessionDisplayStore.getState().setPinLists(value), autoSave: false } }),
+  sidebarHiddenSections: field({ scope: 'profile', perSurface: true, parse: fromSchema(hiddenSidebarSectionsSchema), ui: { read: () => useSessionDisplayStore.getState().hiddenSections, write: (value) => useSessionDisplayStore.getState().setHiddenSections(value), autoSave: false } }),
 
   // ── Work status ──
   workStatusSectionOrder: field({
@@ -470,6 +486,7 @@ export const SETTINGS_REGISTRY = {
   fileEditorKeymap: field({ scope: 'profile', parse: parseFileEditorKeymap, ui: uiStore('fileEditorKeymap', (v) => useUIStore.getState().setFileEditorKeymap(v)) }),
   fileEditorVimMappings: field({ scope: 'profile', parse: parseTextUpTo(10_000), ui: uiStore('fileEditorVimMappings', (v) => useUIStore.getState().setFileEditorVimMappings(v)) }),
   autoSaveEnabled: field({ scope: 'profile', parse: parseBoolean, ui: uiStore('autoSaveEnabled', (v) => useUIStore.getState().setAutoSaveEnabled(v)) }),
+  fileEditorWrapLines: field({ scope: 'profile', parse: parseBoolean, ui: uiStore('fileEditorWrapLines', (v) => useUIStore.getState().setFileEditorWrapLines(v)) }),
   confirmFileTreeMove: field({ scope: 'profile', parse: parseBoolean, ui: uiStore('confirmFileTreeMove', (v) => useUIStore.getState().setConfirmFileTreeMove(v)) }),
   fileTreeSide: field({ scope: 'profile', surfaces: ['web', 'desktop'], parse: parseOneOf(['left', 'right']), ui: uiStore('fileTreeSide', (v) => useUIStore.getState().setFileTreeSide(v)) }),
   layoutAnimations: field({ scope: 'profile', surfaces: ['web', 'desktop'], parse: parseBoolean, ui: uiStore('layoutAnimations', (v) => useUIStore.getState().setLayoutAnimations(v)) }),
@@ -555,7 +572,7 @@ export const SETTINGS_REGISTRY = {
   fallbackVariant: field({ scope: 'profile', parse: parseNonEmptyString }),
   accountSwitchProviders: field({ scope: 'profile', parse: parseStringSet }),
   zenModel: field({ scope: 'profile', parse: parseNonEmptyTrimmedString }),
-  // The model-prefs auto-save owns these six with its own debounce.
+  // The model-prefs auto-save owns these with its own debounce.
   favoriteModels: field<ModelRef[]>({ scope: 'profile', parse: parseModelRefs(64), ui: uiStore('favoriteModels', setUi('favoriteModels'), { autoSave: false }) }),
   hiddenModels: field<ModelRef[]>({ scope: 'profile', parse: parseModelRefs(1024), ui: uiStore('hiddenModels', setUi('hiddenModels'), { autoSave: false }) }),
   collapsedModelProviders: field({ scope: 'profile', parse: parseStringSet, ui: uiStore('collapsedModelProviders', setUi('collapsedModelProviders'), { autoSave: false }) }),
@@ -565,6 +582,7 @@ export const SETTINGS_REGISTRY = {
   recentAgents: field({ scope: 'profile', parse: parseStringSet, ui: uiStore('recentAgents', setUi('recentAgents'), { autoSave: false }) }),
   favoriteAgents: field({ scope: 'profile', parse: parseStringSet, ui: uiStore('favoriteAgents', setUi('favoriteAgents'), { autoSave: false }) }),
   recentEfforts: field({ scope: 'profile', parse: parseRecentEfforts, ui: uiStore('recentEfforts', setUi('recentEfforts'), { autoSave: false }) }),
+  lastUsedEfforts: field({ scope: 'profile', parse: parseLastUsedEfforts, ui: uiStore('lastUsedEfforts', setUi('lastUsedEfforts'), { autoSave: false }) }),
   providerOrder: field({ scope: 'profile', parse: parseStringSet, ui: uiStore('providerOrder', (v) => useUIStore.getState().setProviderOrder(v)) }),
 
   // ── Sessions and summaries (profile) ──
@@ -672,6 +690,7 @@ export const LOCAL_DEVICE_KEYS = [
   'sidebarWidth',
   'contextPanelByDirectory',
   'contextZoneSizes',
+  'contextZoneExpandedChatSizes',
   'contextRailOrder',
   'contextRailHiddenSurfaces',
   'mobileWorkspaceTabOrder',

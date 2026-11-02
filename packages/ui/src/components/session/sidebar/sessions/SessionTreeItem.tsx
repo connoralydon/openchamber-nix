@@ -2,9 +2,11 @@ import React from 'react';
 import { SessionNodeItem } from './SessionNodeItem';
 import type { SessionNodeItemProps } from './SessionNodeItem';
 import type { SessionNode } from '../types';
+import { listedChildren } from '../listedChildren';
 import type { SessionSidebarRenderContext } from '../sessionSidebarRowModel';
 import type { SessionNodeRenderExtras } from './sessionNodeItemUtils';
 import { useSessionActions, type DeleteSessionConfirmState } from './useSessionActions';
+import { collectParentIdDescendantIds } from './sessionSubtreeActions';
 import { useSessionFoldersStore } from '@/stores/useSessionFoldersStore';
 import { useUIStore } from '@/stores/useUIStore';
 import { SessionDeleteConfirmDialog } from '../shell/ConfirmDialogs';
@@ -16,6 +18,7 @@ type Context = {
   groupDirectory?: string | null;
   projectId?: string | null;
   folderOwnerKey?: string | null;
+  ownerProjectId?: string | null;
   selectionScopeKey?: string | null;
   archivedBucket?: boolean;
   secondaryMeta?: { projectLabel?: string | null; branchLabel?: string | null; inSpace?: boolean } | null;
@@ -73,6 +76,7 @@ function SessionTreeItemComponent({
   groupDirectory,
   projectId,
   folderOwnerKey,
+  ownerProjectId,
   selectionScopeKey,
   archivedBucket = false,
   secondaryMeta,
@@ -115,15 +119,10 @@ function SessionTreeItemComponent({
   // rebuilds a project's node tree whenever one of its session records
   // changes, and a fresh array here would give every row in that project a
   // new delete handler and force it to re-render.
-  const descendantIdsKey = React.useMemo(() => {
-    const ids: string[] = [];
-    const visit = (current: SessionNode) => current.children.forEach((child) => {
-      ids.push(child.session.id);
-      visit(child);
-    });
-    visit(node);
-    return ids.join('\n');
-  }, [node]);
+  const descendantIdsKey = React.useMemo(
+    () => collectParentIdDescendantIds(node).join('\n'),
+    [node],
+  );
   const descendantIds = React.useMemo(
     () => (descendantIdsKey ? descendantIdsKey.split('\n') : []),
     [descendantIdsKey],
@@ -191,6 +190,7 @@ function SessionTreeItemComponent({
       groupDirectory={groupDirectory}
       projectId={projectId}
       folderOwnerKey={folderOwnerKey}
+      ownerProjectId={ownerProjectId}
       selectionScopeKey={selectionScopeKey}
       archivedBucket={archivedBucket}
       secondaryMeta={secondaryMeta}
@@ -204,7 +204,7 @@ function SessionTreeItemComponent({
       blockingBadgeSessionScopes={renderExtras?.blockingBadgeSessionScopes}
       relativeTimeTick={renderExtras?.relativeTimeTick}
     >
-      {renderChildren ? node.children.map((child) => (
+      {renderChildren ? listedChildren(node).map((child) => (
         <SessionTreeItem
           key={child.session.id}
            node={child}
@@ -233,6 +233,7 @@ function SessionTreeItemComponent({
            depth={depth + 1}
            ownsWork={false}
            folderOwnerKey={folderOwnerKey}
+           ownerProjectId={ownerProjectId}
            selectionScopeKey={selectionScopeKey}
           {...childContext}
           renderExtras={childRenderExtrasFor?.(child)}
@@ -279,7 +280,7 @@ const areSessionTreeItemPropsEqual = (prev: SessionTreeItemProps, next: SessionT
   if ((prev.secondaryMeta?.branchLabel ?? null) !== (next.secondaryMeta?.branchLabel ?? null)) return false;
   if ((prev.secondaryMeta?.inSpace ?? false) !== (next.secondaryMeta?.inSpace ?? false)) return false;
   const scalarKeys = [
-    'depth', 'ownsWork', 'groupDirectory', 'projectId', 'folderOwnerKey', 'selectionScopeKey', 'archivedBucket',
+    'depth', 'ownsWork', 'groupDirectory', 'projectId', 'folderOwnerKey', 'ownerProjectId', 'selectionScopeKey', 'archivedBucket',
     'renderContext', 'detailed', 'rowKey', 'dragKey', 'renderChildren',
     'hasSessionSearchQuery', 'normalizedSessionSearchQuery',
     'editingId', 'editingRowKey', 'editTitle', 'openSidebarMenuKey',

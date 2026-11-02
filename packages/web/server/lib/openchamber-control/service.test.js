@@ -12,6 +12,7 @@ const createService = (overrides = {}) => {
     session: {
       list: vi.fn(async () => ({ data: [] })),
       active: vi.fn(async () => ({})),
+      inbox: { list: vi.fn(async () => []) },
     },
     message: {
       list: vi.fn(async () => ({ data: [] })),
@@ -759,15 +760,23 @@ describe('render.page', () => {
     expect(await named(page)).toBe('Page');
   });
 
-  it('asks for html and title in one call when html is missing', async () => {
+  it('asks for the page and its title in one call when the page is missing', async () => {
     const { service } = createService();
     await expect(service.execute('render.page', { title: 'Coverage' }, '/repo'))
-      .rejects.toMatchObject({ message: expect.stringContaining('Send html and title together in one call') });
+      .rejects.toMatchObject({ message: expect.stringContaining('Send it and title together in one call') });
+  });
+
+  it('shows a ui program the way it shows html, named by its title', async () => {
+    const { service } = createService();
+    const result = await service.execute('render.page', { ui: 'root = Stack([Text("hi")])', title: 'Pick' }, '/repo');
+    expect(result).toMatchObject({ shown: true, title: 'Pick' });
   });
 
   it.each([
-    [{ title: 'Coverage' }, 'html is required'],
-    [{ html: '   ', title: 'Coverage' }, 'html is required'],
+    [{ title: 'Coverage' }, 'html or ui is required'],
+    [{ html: '   ', title: 'Coverage' }, 'html or ui is required'],
+    [{ html: page, ui: 'root = Stack([])', title: 'Coverage' }, 'not both'],
+    [{ ui: 'x'.repeat(200_001), title: 'Coverage' }, 'ui is 200001 characters'],
     [{ html: 'x'.repeat(200_001), title: 'Coverage' }, 'the limit is 200000'],
     [{ html: page, title: 't'.repeat(121) }, 'the limit is 120'],
   ])('refuses %o with a reason the agent can act on', async (input, reason) => {
@@ -787,6 +796,18 @@ describe('render.page', () => {
     const call = { contextSessionId: 'ses_1', contextCallId: 'call_1' };
     // The call starts waiting once its checks have run.
     const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    it('hands the agent the errors when a client cannot draw its ui', async () => {
+      const { service } = createService();
+      const pending = service.execute('render.page', { ui: 'root = Stack([Text(1)])', title: 'Pick', awaitAnswer: true }, '/repo', call);
+      await settle();
+
+      expect(service.answerPage({ sessionId: 'ses_1', callId: 'call_1', notDrawn: ['Text /markdown: expects string'] })).toEqual({ answered: false });
+      const result = await pending;
+
+      expect(result).toMatchObject({ answer: { answered: false, reason: 'ui-not-drawn' } });
+      expect(result.note).toContain('Text /markdown: expects string');
+    });
 
     it('waits until the user answers and returns the answer', async () => {
       const { service } = createService();
@@ -855,6 +876,42 @@ describe('render.page', () => {
       expect(() => service.answerPage({ sessionId: 'ses_1', callId: 'call_1', ...answer })).toThrow(expect.objectContaining({ statusCode }));
       service.answerPage({ sessionId: 'ses_1', callId: 'call_1', summary: 'B' });
       await expect(pending).resolves.toMatchObject({ answer: { summary: 'B' } });
+    });
+
+    it('does not wait when the user wrote in the chat before the page appeared', async () => {
+      const onPageWaitChange = vi.fn();
+      const { service, client } = createService({ onPageWaitChange });
+      client.session.inbox.list.mockResolvedValue([
+        { id: 'msg_2', sessionID: 'ses_1', type: 'user', delivery: 'steer', payload: { text: 'draw it' }, time: { created: 1 } },
+      ]);
+
+      const result = await service.execute('render.page', ask, '/repo', call);
+
+      expect(client.session.inbox.list).toHaveBeenCalledWith({ sessionID: 'ses_1' });
+      expect(result).toMatchObject({ title: 'Pick a layout', answer: { answered: false, reason: 'chat-sent-earlier' } });
+      expect(result.note).toContain('not an answer to it');
+      expect(onPageWaitChange).not.toHaveBeenCalled();
+      expect(() => service.answerPage({ sessionId: 'ses_1', callId: 'call_1', summary: 'B' })).toThrow(expect.objectContaining({ statusCode: 404 }));
+    });
+
+    it('waits when only a synthetic or queued message is pending, or the inbox cannot be read', async () => {
+      const { service, client } = createService();
+      client.session.inbox.list.mockResolvedValueOnce([
+        { id: 'msg_2', sessionID: 'ses_1', type: 'synthetic', delivery: 'steer', payload: { text: 'subagent finished' }, time: { created: 1 } },
+        { id: 'msg_3', sessionID: 'ses_1', type: 'user', delivery: 'queue', payload: { text: 'after this turn' }, time: { created: 2 } },
+      ]);
+      const pending = service.execute('render.page', ask, '/repo', call);
+      await settle();
+      service.answerPage({ sessionId: 'ses_1', callId: 'call_1', summary: 'B' });
+      await expect(pending).resolves.toMatchObject({ answer: { answered: true, summary: 'B' } });
+
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      client.session.inbox.list.mockRejectedValueOnce(new Error('OpenCode is down'));
+      const failedRead = service.execute('render.page', ask, '/repo', call);
+      await settle();
+      service.answerPage({ sessionId: 'ses_1', callId: 'call_1', summary: 'A' });
+      await expect(failedRead).resolves.toMatchObject({ answer: { answered: true, summary: 'A' } });
+      warn.mockRestore();
     });
 
     it('refuses to wait without a call id, so an older plugin falls back to asking in text', async () => {

@@ -34,6 +34,7 @@ import { readContextPart } from '@/lib/messages/contextParts';
 import UserContextPart from './UserContextPart';
 import { SessionMentionChipsContext, withSessionMentionChips, type SessionMentionChips } from './sessionMentionChips';
 import { appOwnOrigins } from '@/lib/router/appOrigins';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 
 type PartWithText = Part & { text?: string; content?: string; value?: string };
 
@@ -370,6 +371,7 @@ const UserTextPart: React.FC<UserTextPartProps> = ({
                     isCollapsed && "line-clamp-2",
                     collapsibleUserMessages && isTruncated && !messageExpanded && "cursor-pointer"
                 )}
+                data-user-message-collapsed={isCollapsed && normalizedRenderingMode === 'markdown' ? '' : undefined}
                 ref={textRef}
                 onClick={handleClick}
                 onKeyDown={handleKeyDown}
@@ -377,30 +379,10 @@ const UserTextPart: React.FC<UserTextPartProps> = ({
                 {normalizedRenderingMode === 'markdown' ? (
                     <SessionMentionChipsContext.Provider value={sessionMentionChips}>
                         <SimpleMarkdownRenderer
+                            singleTilde={false}
                             content={processedMarkdownContent}
-                            className={cn(
-                                "[&_.markdown-content>*:first-child]:mt-0 [&_.markdown-content>*:last-child]:mb-0",
-                                isCollapsed && [
-                                    "[&_.markdown-content>*]:my-0",
-                                    "[&_[data-oc-streamdown]>*]:![margin-block:0]",
-                                    "[&_[data-oc-markdown-block]>*]:![margin-block:0]",
-                                    "[&_[data-streamdown='code-block']]:!my-0",
-                                    "[&_[data-streamdown='code-block']]:!inline",
-                                    "[&_[data-streamdown='code-block']]:!border-0",
-                                    "[&_[data-streamdown='code-block']]:!bg-transparent",
-                                    "[&_[data-streamdown='code-block-header']]:!hidden",
-                                    "[&_[data-streamdown='code-block-actions']]:!hidden",
-                                    "[&_[data-streamdown='code-block-body']]:!inline",
-                                    "[&_[data-streamdown='code-block-body']]:!p-0",
-                                    "[&_[data-streamdown='code-block-body']_pre]:!inline",
-                                    "[&_[data-streamdown='code-block-body']_pre]:!p-0",
-                                    "[&_[data-streamdown='code-block-body']_code]:!inline",
-                                    "[&_[data-streamdown='code-block-body']_code]:!ps-0",
-                                    "[&_[data-streamdown='code-block-body']_code]:![background-image:none]",
-                                    "[&_[data-streamdown='code-block-body']_code>span]:!block",
-                                    "[&_[data-streamdown='code-block-body']_code>span]:before:!hidden",
-                                 ]
-                            )}
+                            // The collapsed look lives in index.css under data-user-message-collapsed.
+                            className="[&_.markdown-content>*:first-child]:mt-0 [&_.markdown-content>*:last-child]:mb-0"
                             disableLinkSafety
                             enableFileReferences={false}
                         />
@@ -416,7 +398,7 @@ const UserTextPart: React.FC<UserTextPartProps> = ({
                             <summary className="cursor-pointer text-muted-foreground">
                                 {t('chat.message.terminalContext', { terminal: context.terminalLabel, start: context.startLine, end: context.endLine })}
                             </summary>
-                            <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap font-mono text-[var(--surface-foreground)]">{context.text}</pre>
+                            <ScrollableOverlay as="pre" outerClassName="mt-2 max-h-48" className="whitespace-pre-wrap font-mono text-[var(--surface-foreground)]" disableHorizontal>{context.text}</ScrollableOverlay>
                         </details>
                     ))}
                 </div>

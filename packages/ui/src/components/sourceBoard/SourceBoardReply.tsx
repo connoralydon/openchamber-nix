@@ -167,7 +167,7 @@ export const SourceBoardReply: React.FC<{
     const busyIcon = (kind: Busy) => (busy === kind ? <Icon name="loader-4" className="size-3.5 animate-spin" /> : null);
 
     return (
-        <section className="flex flex-col gap-2 border-t border-border/60 pt-4" aria-label={t('sourceBoard.reply.label')}>
+        <section className="flex flex-col gap-2 border-t border-edge pt-4" aria-label={t('sourceBoard.reply.label')}>
             <Textarea
                 value={text}
                 onChange={(event) => setText(event.target.value)}

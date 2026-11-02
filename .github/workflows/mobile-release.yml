@@ -32,6 +32,14 @@ on:
         type: boolean
   workflow_call:
     inputs:
+      ref:
+        description: Commit to build. Leave empty for the caller's commit.
+        required: false
+        type: string
+      app_version:
+        description: Version the bundled web app reports (the update check reads it). Leave empty to keep package.json.
+        required: false
+        type: string
       version_name:
         description: Version name / marketing version. Leave empty to use package.json version.
         required: false
@@ -61,7 +69,8 @@ on:
         type: boolean
 
 concurrency:
-  group: mobile-release-${{ inputs.release_tag != '' && inputs.release_tag || github.run_id }}
+  # Per platform too: the Canary run builds Android and iOS as two calls.
+  group: mobile-release-${{ inputs.release_tag != '' && inputs.release_tag || github.run_id }}-${{ inputs.build_android }}-${{ inputs.build_ios }}
   cancel-in-progress: false
 
 env:
@@ -99,7 +108,10 @@ jobs:
           fi
 
           version_name="${input_version:-$package_version}"
-          build_number="${input_build:-${{ github.run_number }}}"
+          # Minutes since the epoch: it grows across every workflow that
+          # builds the apps (the nightly Canary, a release), and Android and
+          # TestFlight both refuse a build number lower than one they have.
+          build_number="${input_build:-$(( $(date -u +%s) / 60 ))}"
           release_tag="$input_release_tag"
 
           {
@@ -117,6 +129,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
@@ -131,6 +145,18 @@ jobs:
 
       - name: Install dependencies
         run: bun install
+
+      # The bundled web app reports this version to the update check, and
+      # About shows it.
+      - name: Set the app version
+        if: inputs.app_version != ''
+        env:
+          APP_VERSION: ${{ inputs.app_version }}
+        run: |
+          npm pkg set version="$APP_VERSION" \
+            --workspace @openchamber/web \
+            --workspace @openchamber/ui \
+            --include-workspace-root
 
       - name: Prepare Android keystore
         shell: bash
@@ -193,6 +219,8 @@ jobs:
     needs: resolve-version
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
 
       # iOS 27 shows an app built with an older SDK as a phone-sized window on large
       # screens such as the unfolded iPhone Duo, and the runner's default Xcode still
@@ -230,6 +258,18 @@ jobs:
 
       - name: Install dependencies
         run: bun install
+
+      # The bundled web app reports this version to the update check, and
+      # About shows it.
+      - name: Set the app version
+        if: inputs.app_version != ''
+        env:
+          APP_VERSION: ${{ inputs.app_version }}
+        run: |
+          npm pkg set version="$APP_VERSION" \
+            --workspace @openchamber/web \
+            --workspace @openchamber/ui \
+            --include-workspace-root
 
       - name: Install Apple signing assets
         shell: bash

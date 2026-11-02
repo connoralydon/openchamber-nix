@@ -58,7 +58,7 @@ export const MobileWalkthroughScreen: React.FC<{
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background text-foreground">
-      <header className="flex h-[var(--oc-header-height,56px)] shrink-0 items-center gap-1.5 border-b border-border/70 px-3 text-foreground">
+      <header className="flex h-[var(--oc-header-height,56px)] shrink-0 items-center gap-1.5 border-b border-edge px-3 text-foreground">
         <button type="button" className={HEADER_BUTTON_CLASS} aria-label={t('header.actions.backAria')} onClick={goBack}>
           <Icon name="arrow-left" className="size-5" />
         </button>

@@ -454,7 +454,7 @@ const CommandListItem: React.FC<CommandListItemProps> = ({
               /{command.name}
             </span>
             {(command.scope || isCommandBuiltIn(command)) && (
-              <span className="typography-micro text-muted-foreground bg-muted px-1 rounded flex-shrink-0 leading-none pb-px border border-border/50">
+              <span className="typography-micro text-muted-foreground bg-muted px-1 rounded flex-shrink-0 leading-none pb-px border border-edge">
                 {isCommandBuiltIn(command) ? t('settings.agents.sidebar.badge.system') : command.scope}
               </span>
             )}

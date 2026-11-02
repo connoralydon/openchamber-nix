@@ -211,7 +211,7 @@ export type HostClient = {
    * for the next listener.
    */
   onLateGenerateResult: (listener: (result: LateGenerateResult) => void) => () => void;
-  /** Number on this guest's rail icon (0 to `GUEST_BADGE_MAX`); `null` clears it. Opening the panel clears it too. */
+  /** Count behind this guest's rail icon (0 to `GUEST_BADGE_MAX`): a dot on the icon, the number in its tooltip; `null` clears it. Opening the panel clears it too. */
   setBadge: (count: number | null) => Promise<void>;
   /**
    * The height the guest's content needs, in CSS px. On the Work Status

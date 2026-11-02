@@ -60,6 +60,13 @@ function installGuestScrollbarActivity(doc) {
   }, { capture: true, passive: true });
 }
 var GUEST_SCROLLBAR_SCRIPT = `(${installGuestScrollbarActivity.toString()})(document);`;
+// packages/sdk/src/manifest.ts
+var TRACKER_URL_TOKENS = ["{id}", "{segment}", "{segments+}"];
+var TRACKER_URL_TOKEN_SET = new Set(TRACKER_URL_TOKENS);
+// packages/sdk/src/session-events.ts
+var GUEST_SESSION_EVENT_TYPES = ["turn-finished", "turn-failed", "permission-asked", "question-asked"];
+var SESSION_EVENTS_IDLE_MS = 10 * 60000;
+var EVENT_TYPES = new Set(GUEST_SESSION_EVENT_TYPES);
 // packages/sdk/src/file-editor.ts
 var patternExpressions = new Map;
 // packages/sdk/src/contract.ts
@@ -158,6 +165,8 @@ var readBrowserProviderRequest = (body) => {
   return { requestId, action, parameters, context: readContext(context) };
 };
 var SOURCE_CONTROL_PROVIDER_IDLE_MS = 10 * 60000;
+var NOTIFICATIONS_PROVIDER_IDLE_MS = 10 * 60000;
+var TRACKER_PROVIDER_IDLE_MS = 10 * 60000;
 // packages/sdk/src/service-surface.ts
 var SURFACE_FRAME_PATH = "/surface/frame";
 var SURFACE_INPUT_PATH = "/surface/input";
@@ -210,7 +219,11 @@ var readEvent = (value) => {
       return null;
     if (!isText(value.key) || !isText(value.code) || value.key.length > 64 || value.code.length > 64)
       return null;
-    return { type: "key", action: value.action, key: value.key, code: value.code, modifiers };
+    if (value.keyCode === undefined)
+      return { type: "key", action: value.action, key: value.key, code: value.code, modifiers };
+    if (!isFiniteNumber(value.keyCode) || !Number.isInteger(value.keyCode) || value.keyCode < 0 || value.keyCode > 255)
+      return null;
+    return { type: "key", action: value.action, key: value.key, code: value.code, keyCode: value.keyCode, modifiers };
   }
   return null;
 };

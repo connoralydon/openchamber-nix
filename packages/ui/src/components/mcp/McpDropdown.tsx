@@ -22,6 +22,7 @@ import { Icon } from "@/components/icon/Icon";
 import { useI18n } from '@/lib/i18n';
 import { toast } from 'sonner';
 import { useMcpDirectory } from './useMcpDirectory';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 
 // Matches the work-status MCP section: a status read boots the directory's
 // whole stdio fleet, so gated surfaces reuse a fresh one inside this window
@@ -69,8 +70,7 @@ export const McpDropdownContent: React.FC<{ active: boolean }> = ({ active }) =>
   const status = useMcpStore((state) => directory ? state.getStatusForDirectory(directory) : null);
   const refresh = useMcpStore((state) => state.refresh);
   const ensureFresh = useMcpStore((state) => state.ensureFresh);
-  const connect = useMcpStore((state) => state.connect);
-  const disconnect = useMcpStore((state) => state.disconnect);
+  const setEnabled = useMcpStore((state) => state.setEnabled);
   const mcpServers = useMcpConfigStore((state) => directory ? selectMcpServersForDirectory(state, directory) : null);
   const loadMcpConfigs = useMcpConfigStore((state) => state.loadMcpConfigs);
   const [isSpinning, setIsSpinning] = React.useState(false);
@@ -130,7 +130,7 @@ export const McpDropdownContent: React.FC<{ active: boolean }> = ({ active }) =>
         </div>
       </div>
 
-      <div className="max-h-64 overflow-y-auto px-3 py-2.5">
+      <ScrollableOverlay outerClassName="max-h-64" className="px-3 py-2.5" disableHorizontal>
         <div className={cn(sortedNames.length > 0 && 'p-1.5')}>
         {sortedNames.map((serverName) => {
           const serverStatus = status?.[serverName];
@@ -179,11 +179,7 @@ export const McpDropdownContent: React.FC<{ active: boolean }> = ({ active }) =>
                   if (!directory) return;
                   setBusyName(serverName);
                   try {
-                    if (checked) {
-                      await connect(serverName, directory);
-                    } else {
-                      await disconnect(serverName, directory);
-                    }
+                    await setEnabled(serverName, checked, directory);
                   } catch (error) {
                     toast.error(error instanceof Error ? error.message : t('mcpDropdown.status.unknownError'));
                   } finally {
@@ -201,7 +197,7 @@ export const McpDropdownContent: React.FC<{ active: boolean }> = ({ active }) =>
           </div>
         )}
         </div>
-      </div>
+      </ScrollableOverlay>
     </div>
   );
 };
@@ -218,8 +214,7 @@ export const McpDropdown: React.FC<McpDropdownProps> = ({ headerIconButtonClass 
   const status = useMcpStore((state) => directory ? state.getStatusForDirectory(directory) : null);
   const refresh = useMcpStore((state) => state.refresh);
   const ensureFresh = useMcpStore((state) => state.ensureFresh);
-  const connect = useMcpStore((state) => state.connect);
-  const disconnect = useMcpStore((state) => state.disconnect);
+  const setEnabled = useMcpStore((state) => state.setEnabled);
   const mcpServers = useMcpConfigStore((state) => directory ? selectMcpServersForDirectory(state, directory) : null);
   const loadMcpConfigs = useMcpConfigStore((state) => state.loadMcpConfigs);
 
@@ -335,11 +330,7 @@ export const McpDropdown: React.FC<McpDropdownProps> = ({ headerIconButtonClass 
                 if (!directory) return;
                 setBusyName(serverName);
                 try {
-                  if (checked) {
-                    await connect(serverName, directory);
-                  } else {
-                    await disconnect(serverName, directory);
-                  }
+                  await setEnabled(serverName, checked, directory);
                 } finally {
                   setBusyName(null);
                 }
@@ -393,7 +384,7 @@ export const McpDropdown: React.FC<McpDropdownProps> = ({ headerIconButtonClass 
           title={t('mcpDropdown.title')}
           onClose={() => setOpen(false)}
           renderHeader={(closeButton) => (
-            <div className="flex items-center justify-between px-3 py-2 border-b border-border/40">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-edge-muted">
               <h2 className="typography-ui-label font-semibold text-foreground">{t('mcpDropdown.title')}</h2>
               <div className="flex items-center gap-1">
                 <button
@@ -414,7 +405,7 @@ export const McpDropdown: React.FC<McpDropdownProps> = ({ headerIconButtonClass 
             {renderServerList()}
           </div>
           {directory && (
-            <div className="px-2 py-1 border-t border-border/40 mt-1">
+            <div className="px-2 py-1 border-t border-edge-muted mt-1">
               <span className="typography-meta text-muted-foreground truncate block">
                 {directory.split('/').pop() || directory}
               </span>

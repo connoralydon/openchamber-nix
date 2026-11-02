@@ -3,6 +3,8 @@ import type { Theme } from '@/types/theme';
 import type { ToolPopupContent } from '../message/types';
 import type { MarkdownCodePlugin } from './streamdownCode';
 
+export type FileReferenceSource = 'path' | 'href';
+
 export interface MermaidControls {
   download?: boolean;
   copy?: boolean;
@@ -20,13 +22,16 @@ export interface MarkdownPresentation {
   /** A preview button next to loopback links; only chat messages show it. */
   loopbackPreview: boolean;
   purpose?: 'copy' | 'image';
+  /** `openui-lang` fences draw as UI blocks (`components/chat/uiBlocks`). */
+  uiBlocks: boolean;
+  /** The finished reply a block's answer replies to; absent while it streams, and outside chat replies. */
+  uiBlockReply: { sessionId: string; messageId: string } | null;
   disableLinkSafety?: boolean;
   theme: Theme;
   mermaidControls: MermaidControls;
-  allowMermaidWheelEvents?: boolean;
   onShowPopup?: (content: ToolPopupContent) => void;
   onExportCode?: (source: string, language: string) => void;
-  confirmFile: (source: string) => Promise<string | null>;
+  confirmFile: (source: string, inputKind?: FileReferenceSource) => Promise<string | null>;
   code: MarkdownCodePlugin;
 }
 

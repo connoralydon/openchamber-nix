@@ -33,6 +33,7 @@ import { GuestApprovalDialog } from './GuestApprovalDialog';
 import { toast } from '@/components/ui';
 import { setGuestServiceSocketPath } from '@/lib/guests/service';
 import { guestNeedsApproval } from '@/lib/guests/capabilities';
+import { SESSION_EVENT_LABEL_KEYS } from '@/lib/guests/session-event-labels';
 import { useEnterpriseMode } from '@/stores/useEnterprisePolicyStore';
 import { guestPackageIconSrc, resolveGuestIconName } from '@/lib/guests/icon';
 import { getGuestSourceUrl } from '@/lib/guests/source-url';
@@ -461,6 +462,19 @@ const ExtensionDetail: React.FC<ExtensionHandlers & { guest: InstalledGuest; onB
           {permissions ? (
             <p className="typography-meta text-foreground">{t('settings.extensions.service.permissions', { list: permissions })}</p>
           ) : null}
+          {guest.sessionEvents ? (
+            <p className="typography-meta text-foreground">
+              {t('settings.extensions.service.sessionEvents', {
+                list: guest.sessionEvents.events.map((type) => t(SESSION_EVENT_LABEL_KEYS[type])).join(', '),
+              })}
+            </p>
+          ) : null}
+          {guest.notifications ? (
+            <p className="typography-meta text-foreground">{t('settings.extensions.service.providesNotifications')}</p>
+          ) : null}
+          {guest.tracker ? (
+            <p className="typography-meta text-foreground">{t('settings.extensions.service.providesTracker', { label: guest.tracker.label })}</p>
+          ) : null}
           {guest.service ? (
             // A security warning: stays visible.
             <p className="typography-meta text-[var(--status-warning)]">{t('settings.extensions.service.warning')}</p>
@@ -625,8 +639,7 @@ export const ExtensionsPage: React.FC = () => {
       );
       return;
     }
-    // Open panels still run the old bundle; the next open loads the new one.
-    closeGuestTabsById(guest.id);
+    // Open panels reload with the new bundle: the update moves the catalog row's revision.
     toast.success(t('settings.extensions.toast.updated', {
       name: result.guest.name,
       version: result.guest.version ?? '',

@@ -10,7 +10,9 @@ import { registerPluginRoutes } from './plugin-routes.js';
 let projectDir;
 let userConfigPath;
 let rootDir;
+let globalPluginsDir;
 let plugins;
+const originalConfigDir = process.env.OPENCODE_CONFIG_DIR;
 let refreshOpenCodeAfterConfigChange;
 let app;
 let cleanupPaths;
@@ -67,6 +69,10 @@ describe('opencode plugin routes', () => {
   beforeAll(async () => {
     rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-plugin-routes-'));
     userConfigPath = path.join(rootDir, 'user-opencode.json');
+    // The global config folder is read at import; keep it off the real one.
+    // User plugin files land in its `plugins/`, the folder OpenCode scans.
+    process.env.OPENCODE_CONFIG_DIR = path.join(rootDir, 'global');
+    globalPluginsDir = path.join(rootDir, 'global', 'plugins');
     process.env.OPENCODE_CONFIG = userConfigPath;
     plugins = await import('./plugins.js');
   });
@@ -74,7 +80,7 @@ describe('opencode plugin routes', () => {
   beforeEach(() => {
     projectDir = fs.mkdtempSync(path.join(rootDir, 'project-'));
     fs.rmSync(userConfigPath, { force: true });
-    fs.rmSync(path.join(rootDir, 'plugins'), { recursive: true, force: true });
+    fs.rmSync(globalPluginsDir, { recursive: true, force: true });
     refreshOpenCodeAfterConfigChange = mock(async () => undefined);
     cleanupPaths = [];
     app = createApp();
@@ -92,6 +98,8 @@ describe('opencode plugin routes', () => {
   afterAll(() => {
     fs.rmSync(rootDir, { recursive: true, force: true });
     delete process.env.OPENCODE_CONFIG;
+    if (originalConfigDir === undefined) delete process.env.OPENCODE_CONFIG_DIR;
+    else process.env.OPENCODE_CONFIG_DIR = originalConfigDir;
   });
 
   test('GET /api/config/plugins empty returns entries and files arrays', async () => {
@@ -375,7 +383,7 @@ describe('opencode plugin routes', () => {
       success: true,
       message: 'Plugin file created.',
     });
-    expect(fs.readFileSync(path.join(rootDir, 'plugins', 'test.js'), 'utf8')).toBe('//x');
+    expect(fs.readFileSync(path.join(globalPluginsDir, 'test.js'), 'utf8')).toBe('//x');
     expect(refreshOpenCodeAfterConfigChange).not.toHaveBeenCalled();
   });
 
@@ -400,7 +408,7 @@ describe('opencode plugin routes', () => {
       .send({ content: '//y' })
       .expect(200);
 
-    expect(fs.readFileSync(path.join(rootDir, 'plugins', 'test.js'), 'utf8')).toBe('//y');
+    expect(fs.readFileSync(path.join(globalPluginsDir, 'test.js'), 'utf8')).toBe('//y');
     expect(response.body).toMatchObject({
       success: true,
       message: 'Plugin file updated.',
@@ -415,7 +423,7 @@ describe('opencode plugin routes', () => {
 
     const response = await request(app).delete(`/api/config/plugins/file/${encodeURIComponent(id)}`).expect(200);
 
-    expect(fs.existsSync(path.join(rootDir, 'plugins', 'test.js'))).toBe(false);
+    expect(fs.existsSync(path.join(globalPluginsDir, 'test.js'))).toBe(false);
     expect(response.body).toMatchObject({
       success: true,
       message: 'Plugin file deleted.',

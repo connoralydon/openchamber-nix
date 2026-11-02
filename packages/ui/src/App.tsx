@@ -25,6 +25,8 @@ import { useWebNotificationStream } from '@/hooks/useWebNotificationStream';
 import { useAgentMemorySync } from '@/hooks/useAgentMemorySync';
 import { useBrowserProviderSync } from '@/hooks/useBrowserProviderSync';
 import { useSourceControlProviderSync } from '@/hooks/useSourceControlProviderSync';
+import { useTrackerProviderSync } from '@/hooks/useTrackerProviderSync';
+import { useGuestCatalogSync } from '@/hooks/useGuestCatalogSync';
 import { useLimitFailoverNotices } from '@/hooks/useLimitFailoverNotices';
 import { useEnterprisePolicySync } from '@/hooks/useEnterprisePolicySync';
 import { useRelayLimitToast } from '@/hooks/useRelayLimitToast';
@@ -48,7 +50,7 @@ import {
 } from '@/lib/desktopBoot';
 import type { RecoveryVariant } from '@/components/onboarding/DesktopConnectionRecovery';
 import { useSessionUIStore } from '@/sync/session-ui-store';
-import { openSessionLink } from '@/lib/router/openSessionFromRoute';
+import { openSession, openSessionLink } from '@/lib/router/openSessionFromRoute';
 import { parseRoute } from '@/lib/router';
 import { beginLastSessionRestore, type LastSessionRestoreResult } from '@/sync/last-session-restore';
 import { markSessionViewed } from '@/sync/notification-store';
@@ -512,14 +514,9 @@ function App({ apis }: AppProps) {
         : null;
       const messageId = typeof detail?.messageId === 'string' ? detail.messageId.trim() || null : null;
       if (openSessionInOwningHostWindow(sessionId, String(detail?.runtimeKey ?? '').trim(), messageId)) return;
-      // A link (a desktop deep link, a link to this window's instance) carries
-      // no directory; the route opener resolves it from the global session
-      // list, as for a web link.
-      if (!directory) {
-        void openSessionLink(sessionId, messageId);
-        return;
-      }
-      void useSessionUIStore.getState().setCurrentSession(sessionId, directory);
+      // A session event carries the owning directory; a link carries none and
+      // lets the opener resolve it from the global session list.
+      void openSession(sessionId, { directory, messageId });
     };
 
     window.addEventListener('openchamber:open-session', handler as EventListener);
@@ -668,6 +665,8 @@ function App({ apis }: AppProps) {
   useAgentMemorySync(currentDirectory || null);
   useBrowserProviderSync();
   useSourceControlProviderSync(apis.sourceControl);
+  useTrackerProviderSync(apis.trackers);
+  useGuestCatalogSync();
   useLimitFailoverNotices();
   useRoutingSync();
   useEnterprisePolicySync();

@@ -34,6 +34,7 @@ import { useWindowTitle } from '@/hooks/useWindowTitle';
 import { useEnterprisePolicySync } from '@/hooks/useEnterprisePolicySync';
 import { useRoutingSync } from '@/hooks/useRoutingSync';
 import { useSourceControlProviderSync } from '@/hooks/useSourceControlProviderSync';
+import { useTrackerProviderSync } from '@/hooks/useTrackerProviderSync';
 import { useAgentMemorySync } from '@/hooks/useAgentMemorySync';
 import { resolvePlanRequestOwner } from '@/hooks/useProjectContextOwner';
 import { opencodeClient } from '@/lib/opencode/client';
@@ -68,6 +69,7 @@ import { MobileHeader } from './MobileHeader';
 import { MobileInstancesSurface } from './MobileInstancesSurface';
 import { MobileSessionsSheet } from './MobileSessionsSheet';
 import { MobileFullscreenSurface } from './MobileFullscreenSurface';
+import { connectMobileSettingsNavigation } from './mobileSettingsNavigation';
 import { UsageStatsView } from '@/components/views/usage/UsageStatsView';
 import { ArchiveSessionsView } from '@/components/views/ArchiveView';
 import { MobileSourceBoard } from '@/components/sourceBoard/SourceBoardView';
@@ -83,12 +85,15 @@ import { useAppFontEffects } from './useAppFontEffects';
 import { useFontsReady } from './useFontsReady';
 import { useDeepLinkHandlers, useDeepLinkSource } from './deepLinkNavigation';
 import { useEdgeSwipe } from './useEdgeSwipe';
+import { useMobileChatInsets } from '@/lib/mobileChatInsets';
 import { useNativePushRegistration } from './useNativePushRegistration';
 import { IpadSidebarResizeHandle } from './IpadSidebarResizeHandle';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import {
   IPAD_LEFT_SIDEBAR_WIDTH,
   IPAD_RIGHT_SIDEBAR_WIDTH,
   IPAD_WORKSPACE_SIDEBAR_MAX_WIDTH,
+  useIpadPanelSlide,
   useIpadSidebarResize,
 } from './ipadSidebarResize';
 
@@ -197,6 +202,11 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
     openSurface('settings');
   }, [openSurface]);
 
+  React.useEffect(
+    () => connectMobileSettingsNavigation(MOBILE_SETTINGS_PAGES, openSettingsSurface),
+    [openSettingsSurface],
+  );
+
   // Tablet: sessions live in a persistent full-height left sidebar instead of
   // the phone's drawer. Everything else — the workspace drawer, the header, the
   // app-level surfaces — is shared with phones.
@@ -263,21 +273,23 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
   // side is barely wider than a tablet's short one — it stays the full-cover
   // drawer, which is the layout that actually works at that width.
   const workspaceAsPanel = roomyForPanels;
-  const workspacePanelWidth = workspaceAsPanel && workspaceOpen ? rightResize.width : 0;
-  const sidebarWidth = isTabletLayout && sidebarOpen ? leftResize.width : 0;
+  const leftSlide = useIpadPanelSlide(isTabletLayout && sidebarOpen);
+  const workspaceSlide = useIpadPanelSlide(workspaceAsPanel && workspaceOpen);
+  // A layout that loses the panel (a tablet folded to a phone, a panel turned
+  // into the drawer) drops its width at once; only a close slides it out.
+  const workspacePanelWidth = workspaceAsPanel && workspaceSlide.placed ? rightResize.width : 0;
+  const sidebarWidth = isTabletLayout && leftSlide.placed ? leftResize.width : 0;
+  // Where a side panel waits while it is off its edge: the start one beyond
+  // the start edge, the end one beyond the end edge.
+  const offStart = direction === 'rtl' ? '100%' : '-100%';
+  const offEnd = direction === 'rtl' ? '-100%' : '100%';
 
   // Publish the chat column's insets so overlays portaled to <body> (model
   // picker, directory picker, every MobileOverlayPanel) can center on the CHAT
   // rather than on the window. Zero on phones, where the two are the same.
   React.useEffect(() => {
-    if (typeof document === 'undefined') return;
-    const root = document.documentElement;
-    root.style.setProperty('--oc-chat-inset-left', `${sidebarWidth}px`);
-    root.style.setProperty('--oc-chat-inset-right', `${workspacePanelWidth}px`);
-    return () => {
-      root.style.removeProperty('--oc-chat-inset-left');
-      root.style.removeProperty('--oc-chat-inset-right');
-    };
+    useMobileChatInsets.setState({ left: sidebarWidth, right: workspacePanelWidth });
+    return () => useMobileChatInsets.setState({ left: 0, right: 0 });
   }, [sidebarWidth, workspacePanelWidth]);
 
   // Wide chat layout: the shared chat columns key off this root class, but only
@@ -310,10 +322,9 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
         openChangesSurface(diffPath ? { path: diffPath, staged: staged === true } : null);
       },
       openFiles: () => openFilesSurface(),
-      openSettings: () => openSettingsSurface('nav'),
       openSourceBoard: () => openSurface('board'),
     }),
-    [openChangesSurface, openFilesSurface, openSettingsSurface, openSurface],
+    [openChangesSurface, openFilesSurface, openSurface],
   );
 
   // Expose the shell's panel-opening actions to the deep-link layer so openchamber:// URLs
@@ -472,7 +483,7 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
       >
         {/* iPad: persistent full-height sessions sidebar; the chat column and
             its header butt against it (iPadOS-style split layout). Always
-            mounted so open/close animates width, same as the desktop Sidebar. */}
+            mounted, so it slides in and out (useIpadPanelSlide). */}
         {isTabletLayout ? (
           <aside
             ref={leftResize.asideRef}
@@ -481,34 +492,33 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
               // rows are opaque bg-background (the swipe actions live under
               // them), so a tinted sidebar would show through as row-shaped
               // bands. Same surface as the phone drawer.
-              'oc-ipad-sidebar relative flex h-full shrink-0 flex-col overflow-hidden border-e border-border/70 bg-background will-change-[width] motion-reduce:transition-none',
-              !sidebarOpen && 'border-e-0',
+              // The aside only holds the space; the surface and its edge are
+              // on the panel inside, which slides as one piece.
+              'oc-ipad-sidebar relative flex h-full shrink-0 flex-col overflow-hidden',
             )}
             style={{
-              width: sidebarOpen ? leftResize.width : 0,
-              minWidth: sidebarOpen ? leftResize.width : 0,
-              maxWidth: sidebarOpen ? leftResize.width : 0,
+              width: sidebarWidth,
+              minWidth: sidebarWidth,
+              maxWidth: sidebarWidth,
               ['--oc-ipad-sidebar-width' as string]: `${leftResize.width}px`,
               overflowX: 'clip',
-              paddingTop: 'var(--oc-safe-area-top, 0px)',
-              transitionProperty: leftResize.isResizing ? 'none' : 'width, min-width, max-width',
-              transitionDuration: '200ms',
-              transitionTimingFunction: 'cubic-bezier(0.22, 1, 0.36, 1)',
             }}
             aria-hidden={!sidebarOpen}
             data-page-scroll-lock="true"
           >
             <div
               className={cn(
-                'flex h-full shrink-0 flex-col transition-opacity duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+                'flex h-full shrink-0 flex-col border-e border-edge bg-background transition-[translate] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
                 leftResize.isResizing && 'pointer-events-none',
-                !sidebarOpen && 'pointer-events-none select-none opacity-0',
+                !sidebarOpen && 'pointer-events-none select-none',
               )}
-              style={{ width: 'var(--oc-ipad-sidebar-width)', overflowX: 'hidden' }}
+              style={{ width: 'var(--oc-ipad-sidebar-width)', overflowX: 'hidden', paddingTop: 'var(--oc-safe-area-top, 0px)', translate: leftSlide.inPlace ? undefined : offStart }}
             >
               <ErrorBoundary>
                 <MobileSessionsSheet
-                  open={sidebarOpen}
+                  // Through the closing slide too: the list stays on screen
+                  // until it has slid away.
+                  open={leftSlide.placed}
                   variant="sidebar"
                   // The surface asks to close after picking a session/project
                   // or creating a worktree: give the space back to the chat
@@ -567,8 +577,7 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
         <aside
           ref={rightResize.asideRef}
           className={cn(
-            'relative flex h-full shrink-0 flex-col overflow-hidden border-s border-border/70 bg-background will-change-[width] motion-reduce:transition-none',
-            !workspacePanelWidth && 'border-s-0',
+            'relative flex h-full shrink-0 flex-col overflow-hidden',
           )}
           style={{
             width: workspacePanelWidth,
@@ -576,25 +585,23 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
             maxWidth: workspacePanelWidth,
             ['--oc-ipad-sidebar-width' as string]: `${rightResize.width}px`,
             overflowX: 'clip',
-            paddingTop: 'var(--oc-safe-area-top, 0px)',
-            transitionProperty: rightResize.isResizing ? 'none' : 'width, min-width, max-width',
-            transitionDuration: '200ms',
-            transitionTimingFunction: 'cubic-bezier(0.22, 1, 0.36, 1)',
           }}
           aria-hidden={!workspacePanelWidth}
           data-page-scroll-lock="true"
         >
           <div
             className={cn(
-              'flex h-full min-h-0 shrink-0 flex-col transition-opacity duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+              'flex h-full min-h-0 shrink-0 flex-col transition-[translate] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+              workspaceAsPanel && 'border-s border-edge bg-background',
               rightResize.isResizing && 'pointer-events-none',
-              !workspacePanelWidth && 'pointer-events-none select-none opacity-0',
+              !workspaceSlide.inPlace && 'pointer-events-none select-none',
             )}
-            style={{ width: 'var(--oc-ipad-sidebar-width)', overflowX: 'hidden' }}
+            style={{ width: 'var(--oc-ipad-sidebar-width)', overflowX: 'hidden', paddingTop: 'var(--oc-safe-area-top, 0px)', translate: workspaceSlide.inPlace ? undefined : offEnd }}
           >
             <ErrorBoundary>
               <MobileWorkspaceDrawer
-                open={workspaceOpen}
+                // As a panel it stays open through its closing slide.
+                open={workspaceAsPanel ? workspaceSlide.placed : workspaceOpen}
                 onClose={closeWorkspace}
                 tab={workspaceTab}
                 onTabChange={setWorkspaceTab}
@@ -604,7 +611,7 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
               />
             </ErrorBoundary>
           </div>
-          {workspacePanelWidth ? (
+          {workspaceAsPanel && workspaceOpen ? (
             <IpadSidebarResizeHandle
               side="right"
               isResizing={rightResize.isResizing}
@@ -760,9 +767,9 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
             title={t('mobile.menu.update')}
           >
             <ErrorBoundary>
-              <div className="h-full overflow-auto px-5 py-4">
+              <ScrollableOverlay outerClassName="h-full" className="px-5 py-4" disableHorizontal>
                 <AboutSettings initialUpdateDialogOpen />
-              </div>
+              </ScrollableOverlay>
             </ErrorBoundary>
           </MobileFullscreenSurface>
         ) : null}
@@ -1239,6 +1246,7 @@ function MobileAppContent({ apis }: MobileAppProps) {
   useRoutingSync();
   useEnterprisePolicySync();
   useSourceControlProviderSync(apis.sourceControl);
+  useTrackerProviderSync(apis.trackers);
   // Same as App.tsx: the session's memory index and the Memory tab both read
   // this snapshot, and without it the phone showed no memory at all.
   useAgentMemorySync(currentDirectory || null);

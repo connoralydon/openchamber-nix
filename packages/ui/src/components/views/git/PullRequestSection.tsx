@@ -980,7 +980,7 @@ export const PullRequestSection: React.FC<{
     const nextPatchset = liveChangeRequest.revisionNumber !== undefined ? liveChangeRequest.revisionNumber + 1 : null;
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <div className="flex shrink-0 items-center gap-2 border-b border-border/40 px-4 py-2">
+        <div className="flex shrink-0 items-center gap-2 border-b border-edge-muted px-4 py-2">
           <Icon name="arrow-up" className="size-3.5 shrink-0 text-[var(--status-warning)]" />
           <span className="min-w-0 flex-1 truncate typography-micro text-muted-foreground">{t('gitView.change.push.notUploaded')}</span>
           <Button size="sm" className="shrink-0" onClick={() => void uploadPatchset(liveChangeRequest)} disabled={isCreating}>
@@ -1029,7 +1029,7 @@ export const PullRequestSection: React.FC<{
       ? `${checks.success}/${checks.total} ${t('gitView.pr.checks.label')}`
       : `${checks.state} ${t('gitView.pr.checks.label')}`
     : '';
-  const headerClassName = 'px-0 py-3 border-b border-border/40 flex flex-col gap-1';
+  const headerClassName = 'px-0 py-3 border-b border-edge-muted flex flex-col gap-1';
   const bodyClassName = 'flex flex-col gap-3 py-3';
 
   const refreshButton = (

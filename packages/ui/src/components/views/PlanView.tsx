@@ -2,6 +2,7 @@ import React from 'react';
 import { CodeMirrorEditor } from '@/components/ui/CodeMirrorEditor';
 import { SimpleMarkdownRenderer } from '@/components/chat/MarkdownRenderer';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
+import { OverlayScrollbar } from '@/components/ui/OverlayScrollbar';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { ActionToolbar } from '@/components/ui/action-toolbar';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
@@ -31,7 +32,8 @@ import { observeProjectContext } from '@/lib/projectContextSync';
 import { getRuntimeKey, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
 import { useProjectContextStore } from '@/stores/useProjectContextStore';
 import { createWorktreeSessionForNewBranch } from '@/lib/worktreeSessionCreator';
-import { TodoSendDialog, type TodoSendExecution } from '@/components/session/TodoSendDialog';
+import { TodoSendDialog } from '@/components/session/TodoSendDialog';
+import { resolveExecutionForDirectory, type TodoSendExecution } from '@/components/session/todoSendExecution';
 import { useMessageTTS } from '@/hooks/useMessageTTS';
 import { toast } from '@/components/ui';
 import { loadMagicPrompts, type MagicPromptSnapshot } from '@/lib/magicPrompts';
@@ -617,7 +619,7 @@ export const PlanView: React.FC<PlanViewProps> = ({ visible = true, savedProject
   }, [onNavigatedToChat, setSessionSwitcherOpen]);
 
   const handleConfirmPlanSend = React.useCallback(
-    async (execution: TodoSendExecution) => {
+    async (dialogExecution: TodoSendExecution) => {
       // A saved plan sends against its own project — the one it is stored
       // under — not against whatever directory the viewer is currently in.
       const sendTargetProject = savedPlanProjectRef ?? currentProjectRef;
@@ -670,6 +672,7 @@ export const PlanView: React.FC<PlanViewProps> = ({ visible = true, savedProject
 
         let sessionId: string | null = null;
         let directoryHint: string | null = sendTargetProject.path;
+        let execution = dialogExecution;
 
         if (pendingPlanSend.target === 'worktree') {
           if (!canCreateWorktree) {
@@ -681,6 +684,7 @@ export const PlanView: React.FC<PlanViewProps> = ({ visible = true, savedProject
           }
           sessionId = created.id;
           directoryHint = created.directory;
+          execution = await resolveExecutionForDirectory(created.directory, dialogExecution);
         } else {
           const sessionResult = await createSession(undefined, sendTargetProject.path, undefined, {
             model: { providerID: execution.providerID, id: execution.modelID, variant: execution.variant || undefined },
@@ -817,7 +821,7 @@ export const PlanView: React.FC<PlanViewProps> = ({ visible = true, savedProject
   return (
     <div className="relative flex h-full min-h-0 min-w-0 w-full flex-col overflow-hidden bg-background">
       <ContextPanelHeaderToolbar>
-      <div className={cn('flex min-w-0 items-center gap-2', inPanelHeader ? 'flex-1 py-1 pe-1' : 'border-b border-border/40 px-3 py-1.5 flex-shrink-0')}>
+      <div className={cn('flex min-w-0 items-center gap-2', inPanelHeader ? 'flex-1 py-1 pe-1' : 'border-b border-edge-muted px-3 py-1.5 flex-shrink-0')}>
         {leading}
         <ActionToolbar
           className="flex-1"
@@ -912,7 +916,8 @@ export const PlanView: React.FC<PlanViewProps> = ({ visible = true, savedProject
             <div className="relative h-full">
               <div className="h-full">
                 {mdViewMode === 'preview' ? (
-                  <div className="h-full overflow-auto p-3" ref={setPreviewContainer}>
+                  <>
+                  <div className="overlay-scrollbar-target overlay-scrollbar-container h-full overflow-auto p-3" ref={setPreviewContainer}>
                     {/* Same comment-on-selection as a markdown file preview. */}
                     <FilePreviewCommentMenu
                       containerRef={previewRef}
@@ -932,6 +937,8 @@ export const PlanView: React.FC<PlanViewProps> = ({ visible = true, savedProject
                       <SimpleMarkdownRenderer content={content} documentAssets={markdownDocumentAssets} className="typography-markdown-body" frontmatter="properties" enableFileReferences={false} />
                     </ErrorBoundary>
                   </div>
+                  <OverlayScrollbar containerRef={previewRef} />
+                  </>
                 ) : (
                   <div className="relative h-full" ref={editorWrapperRef}>
                     <CodeMirrorEditor

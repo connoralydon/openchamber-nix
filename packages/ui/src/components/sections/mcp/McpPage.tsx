@@ -22,6 +22,7 @@ import {
 } from './mcpImport';
 import { useMcpStore } from '@/stores/useMcpStore';
 import { McpOAuthSignIn } from './McpOAuthSignIn';
+import { useMcpOAuthIntegration } from './useMcpOAuthIntegration';
 import { MCP_DRAFT_OAUTH_UNSET, normalizeMcpServerName, readCarriedOAuth, type McpOAuthCarried } from './mcpDraft';
 import { useIntegrationPolicyBlock } from '@/components/sections/shared/useIntegrationPolicyBlock';
 import { useSettingsDirectory } from '@/hooks/useSettingsDirectory';
@@ -64,6 +65,7 @@ import { Icon } from "@/components/icon/Icon";
 import { SortableTabsStrip, type SortableTabsStripItem } from '@/components/ui/sortable-tabs-strip';
 import { useI18n } from '@/lib/i18n';
 import type { McpServerStatus } from '@/lib/opencode/model';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 
 /** A stored millisecond value as the form shows it; empty means "not set". */
 const msField = (value: number | undefined): string =>
@@ -229,7 +231,7 @@ const CommandTextarea: React.FC<CommandTextareaProps> = ({
           <summary className="typography-micro text-muted-foreground cursor-pointer select-none hover:text-foreground">
             {preview(value.length)}
           </summary>
-          <div className="mt-1 rounded-md bg-[var(--surface-elevated)] px-3 py-2 overflow-x-auto">
+          <ScrollableOverlay outerClassName="overlay-scrollbar-wrapper--no-gutter mt-1 rounded-md bg-[var(--surface-elevated)]" fillContainer={false} className="px-3 py-2">
             <code className="typography-micro text-foreground/80 whitespace-pre">
               {value.map((a, i) => (
                 <span key={i} className="block">
@@ -238,7 +240,7 @@ const CommandTextarea: React.FC<CommandTextareaProps> = ({
                 </span>
               ))}
             </code>
-          </div>
+          </ScrollableOverlay>
         </details>
       )}
     </div>
@@ -1015,11 +1017,25 @@ export const McpPage: React.FC = () => {
   };
 
   /**
+   * A `failed` server with an OAuth sign-in is often one whose stored token
+   * the service rejected; Connect would only send it again. Its header button
+   * becomes "Sign in again", and each press mounts a fresh sign-in that
+   * starts on its own and shows only its progress in the status card.
+   */
+  const runtimeFailed = selectedMcpName ? readMcpStatusName(mcpStatus[selectedMcpName]) === 'failed' : false;
+  const failedOAuthIntegration = useMcpOAuthIntegration(selectedMcpName ?? '', currentDirectory, runtimeFailed);
+  const [signInAgain, setSignInAgain] = React.useState<{ server: string; run: number } | null>(null);
+  React.useEffect(() => {
+    setSignInAgain(null);
+  }, [selectedMcpName]);
+
+  /**
    * OpenCode has stored the OAuth credential; the server itself is still in
-   * `needs_auth` until it is connected again with that credential.
+   * `needs_auth` or `failed` until it is connected again with that credential.
    */
   const handleOAuthConnected = async () => {
     if (!selectedMcpName) return;
+    setSignInAgain(null);
     try {
       await connectMcp(selectedMcpName, currentDirectory);
       toast.success(t('settings.mcp.page.toast.connected'));
@@ -1137,6 +1153,8 @@ export const McpPage: React.FC = () => {
     : runtimeStatus ? readMcpStatusName(runtimeStatus) : runtimeDiagnostic?.status;
   const effectiveStatusError = runtimeStatus ? readMcpStatusError(runtimeStatus) : runtimeDiagnostic?.error;
   const isConnected = readMcpStatusName(runtimeStatus) === 'connected';
+  const offersSignInAgain = effectiveStatusName === 'failed' && failedOAuthIntegration !== null;
+  const signInAgainRun = signInAgain?.server === selectedMcpName ? signInAgain.run : 0;
 
   const runtimeDescription = getStatusDescription(effectiveStatusName, tUnsafe, effectiveStatusError);
   const getStatusLabel = (status: string) => {
@@ -1180,15 +1198,26 @@ export const McpPage: React.FC = () => {
           : t('settings.mcp.page.header.transport', { type: mcpType === 'local' ? t('settings.mcp.page.transport.local') : t('settings.mcp.page.transport.remote') })}
         headerEnd={!isNewServer ? (
           <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant={isConnected ? 'outline' : 'default'}
-            size="xs"
-            className="!font-normal"
-            onClick={handleToggleConnect}
-            disabled={isConnecting || !enabled || blocked}
-          >
-            {isConnecting ? t('settings.mcp.page.actions.working') : isConnected ? t('settings.mcp.page.actions.disconnect') : t('settings.mcp.page.actions.connect')}
-          </Button>
+          {offersSignInAgain ? (
+            <Button
+              size="xs"
+              className="!font-normal"
+              onClick={() => setSignInAgain({ server: selectedMcpName, run: signInAgainRun + 1 })}
+              disabled={!enabled}
+            >
+              {t('settings.mcp.page.actions.signInAgain')}
+            </Button>
+          ) : (
+            <Button
+              variant={isConnected ? 'outline' : 'default'}
+              size="xs"
+              className="!font-normal"
+              onClick={handleToggleConnect}
+              disabled={isConnecting || !enabled || blocked}
+            >
+              {isConnecting ? t('settings.mcp.page.actions.working') : isConnected ? t('settings.mcp.page.actions.disconnect') : t('settings.mcp.page.actions.connect')}
+            </Button>
+          )}
           {isConnected && (
             <Button
               variant="ghost"
@@ -1220,6 +1249,17 @@ export const McpPage: React.FC = () => {
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <span className={SETTINGS_FIELD_LABEL_CLASS}>{t('settings.mcp.page.status.runtimeStatus')}</span>
                     <StatusBadge status={effectiveStatusName} enabled={enabled} getStatusLabel={getStatusLabel} />
+                    {!isConnected && (
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        className="!font-normal ms-auto"
+                        onClick={() => void handleTestConnection()}
+                        disabled={isTestingConnection || !enabled || blocked}
+                      >
+                        {isTestingConnection ? t('settings.mcp.page.actions.testing') : t('settings.mcp.page.actions.testConnection')}
+                      </Button>
+                    )}
                   </div>
                   <p className="typography-meta text-muted-foreground">{runtimeDescription}</p>
                   <p className="typography-micro text-muted-foreground">
@@ -1237,19 +1277,16 @@ export const McpPage: React.FC = () => {
                   />
                 )}
 
-                <div className="flex flex-wrap items-center gap-2">
-                  {!isConnected && (
-                    <Button
-                      variant="outline"
-                      size="xs"
-                      className="!font-normal"
-                      onClick={() => void handleTestConnection()}
-                      disabled={isTestingConnection || !enabled || blocked}
-                    >
-                      {isTestingConnection ? t('settings.mcp.page.actions.testing') : t('settings.mcp.page.actions.testConnection')}
-                    </Button>
-                  )}
-                </div>
+                {offersSignInAgain && signInAgainRun > 0 && (
+                  <McpOAuthSignIn
+                    key={signInAgainRun}
+                    serverName={selectedMcpName}
+                    directory={currentDirectory}
+                    onConnected={handleOAuthConnected}
+                    autoStart
+                    showStartButton={false}
+                  />
+                )}
 
               </div>
             </div>

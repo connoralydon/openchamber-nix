@@ -82,7 +82,11 @@ export const UsageSidebar: React.FC<UsageSidebarProps> = ({ onItemSelect }) => {
           <span className="typography-micro text-muted-foreground">{t('settings.usage.sidebar.field.display')}</span>
           <Select value={usageDisplayMode} onValueChange={handleUsageDisplayModeChange}>
             <SelectTrigger className="w-fit">
-              <SelectValue placeholder={t('settings.usage.sidebar.field.displayModePlaceholder')} />
+              <SelectValue>
+                {usageDisplayMode === 'remaining'
+                  ? t('settings.usage.sidebar.field.displayModeRemaining')
+                  : t('settings.usage.sidebar.field.displayModeUsage')}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="usage">{t('settings.usage.sidebar.field.displayModeUsage')}</SelectItem>

@@ -197,7 +197,7 @@ export const MobileDeleteWorktreeDialog: React.FC<MobileDeleteWorktreeDialogProp
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cn(
-        'flex w-full items-center justify-between gap-3 rounded-xl border border-border/70 px-3.5 py-3 text-start transition-colors',
+        'flex w-full items-center justify-between gap-3 rounded-xl border border-edge px-3.5 py-3 text-start transition-colors',
         'hover:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         disabled && 'pointer-events-none opacity-40',
       )}

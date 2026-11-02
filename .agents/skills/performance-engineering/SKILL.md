@@ -1,6 +1,6 @@
 ---
 name: performance-engineering
-description: Use when measuring, profiling, or comparing performance; when implementing or reviewing code on startup, interaction, render, scroll, event, polling, synchronization, list-processing, store-selector, cache, indexing, or high-volume data paths; when users report lag, freezes, jank, high CPU, memory growth, heavy network traffic, slow startup, or performance regressions; and before accepting memoization or caching as a fix for repeated work.
+description: Use when measuring, profiling, or comparing performance; when implementing or reviewing code on startup, interaction, render, scroll, event, polling, synchronization, list-processing, store-selector, cache, indexing, or high-volume data paths; when users report lag, freezes, jank, high CPU, memory growth, heavy network traffic, slow startup, or performance regressions; when writing motion, keyboard or focus handling for the iOS app; and before accepting memoization or caching as a fix for repeated work.
 ---
 
 # Performance Engineering
@@ -217,7 +217,7 @@ Before virtualizing a collection, define:
 - initialization, remount, and activation-threshold behavior;
 - interactions that depend on mounted DOM, including incremental reveal, focus, selection, drag-and-drop, menus, and accessibility traversal.
 
-Lists here use `@tanstack/react-virtual`; the chat transcript uses LegendList (`components/chat/lib/scroll/DOCUMENTATION.md`). Known traps: a virtualizer enabled before its scroll element exists caches offset 0 and scrolls the scroller to the top on attach, so enable it only once the element is known; row margins collapse in plain flow but not across virtual wrappers, so spacing doubles when virtualization kicks in; `getVirtualItems()[0]` is the overscan boundary, not the first visible row; a scroller hosting a virtualizer sets `overflow-anchor: none`. `bun-patches/@tanstack+virtual-core+*.patch` clamps the render range to real scroll bounds inside a shared scroller: carry it over when bumping the dependency.
+Lists here use `@tanstack/react-virtual`; the chat transcript uses LegendList (`components/chat/lib/scroll/DOCUMENTATION.md`). Known traps: a virtualizer enabled before its scroll element exists caches offset 0 and scrolls the scroller to the top on attach, so enable it only once the element is known; row margins collapse in plain flow but not across virtual wrappers, so spacing doubles when virtualization kicks in; `getVirtualItems()[0]` is the overscan boundary, not the first visible row; a scroller hosting a virtualizer sets `overflow-anchor: none`. `bun-patches/@tanstack+virtual-core+*.patch` clamps the render range to real scroll bounds inside a shared scroller, and gives a full measurement rebuild a fresh array so `measurementsCache` read before the rows changed keeps its numbers (the sidebar's header motion reads it): carry both over when bumping the dependency.
 
 When activation is threshold-based, test threshold minus one, threshold, and threshold plus one. Also test applicable collapsed/expanded, hidden/visible, filtered/unfiltered, and short/long transitions. If the current DOM or scroll topology cannot expose the virtual tail reliably, correct that topology or retain normal rendering rather than virtualizing solely by item count.
 
@@ -248,6 +248,7 @@ A cache inside an `O(consumers × entities × candidates)` loop is a mitigation,
 - **A closed surface still pays for its subscriptions.** An always-mounted dialog that reads session messages rebuilt itself on every streamed flush. Put the reading body inside `DialogContent` so it mounts only while open or closing (`TimelineDialog`, `SessionGoalDialog`).
 - **Whole-record session hooks re-render on every streamed step.** `useSession` and `useSessionMessages` change identity on each `session.updated` and flush; components that show one field read it through the leaf selectors in `sync/sync-context.tsx` (rule in `sync/DOCUMENTATION.md`).
 - **LegendList state lags the DOM by a frame.** `getState()` sizes come from estimates until rows are measured and from the footer a beat later; read `scrollHeight` when choosing a scroll target, and list state only to skip work mid-glide. See the bun patch in `message/parts/DOCUMENTATION.md`.
+- **The iOS app runs a different WebKit.** Focus, compositor motion, frame rate and scrolling cost there what they do not in Chrome, and only a device measures it. Read `references/ios-webkit.md` before measuring the iOS app or writing motion, keyboard or focus code that runs in it.
 - **Count processes on server Git paths.** Look for a git spawn per item, the same read repeated within one operation, and network calls (`ls-remote`, `fetch`) where local refs answer. Batch into one read (`git remote -v`, not `get-url` per remote), keep a fallback when the batched read fails, prove the output matches the old method, and parse with `/\r?\n/`: Git for Windows may print CRLF, and spawns cost more there.
 
 ## Motion That Stays On Screen
@@ -309,6 +310,7 @@ live in the documentation and `--help`.
 | `bun run profile:heap` | JS heap and DOM kept after hovering and opening N sessions. |
 | `bun run profile:composer` | Elements restyled per new composer line. |
 | `bun run profile:toggle` | What opening and closing the session sidebar and the context panel costs, per toggle: input to next frame, dropped and worst frames, style/layout, forced layouts with their JS stacks. |
+| `bun run profile:ios` | On a real iPhone through its WebKit inspector: tap to keyboard, per-frame positions through a keyboard open, where large subtrees hide (`references/ios-webkit.md`). |
 | `bun run profile:compare` | The before/after verdict: builds both sides, runs the scenarios serially, prints median, p95, change and validity flags. |
 | `bun run profile:serve` | An isolated server with the fixture provider for manual runs and ablations. |
 | `bun run profile:analyze` | Attribution for one run: functions, source files, components, long tasks, large restyles, renders. |

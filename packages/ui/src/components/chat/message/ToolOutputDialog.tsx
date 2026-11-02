@@ -27,6 +27,7 @@ import { ToolbarTooltipButton } from '@/components/ui/action-toolbar';
 import { useDefaultDiffViewMode } from './useDefaultDiffViewMode';
 import { VirtualizedCodeBlock, type CodeLine } from './parts/VirtualizedCodeBlock';
 import { JsonTreeView } from '@/components/ui/JsonTreeView';
+import { StatusImage } from '@/components/ui/status-image';
 import { Icon } from "@/components/icon/Icon";
 import { getToolIcon } from './parts/toolPresentation';
 import { useGuestToolPresentation } from '@/lib/guests/tool-presentation';
@@ -37,6 +38,7 @@ import { toast } from '@/components/ui';
 import { saveFile } from './parts/saveFile';
 import { MermaidLoadFailure, getMermaidDataUrlSourcePromise, isCurrentMermaidLoadRequest, isMermaidLoadFailure, nextMermaidLoadRequestId } from './toolOutputDialogMermaid';
 import { PIERRE_DIFF_TINT_CSS } from '@/lib/shiki/pierreDiffTint';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 
 interface ToolOutputDialogProps {
     popup: ToolPopupContent;
@@ -489,14 +491,14 @@ const ImagePreviewDialog: React.FC<{
                         </div>
                     </div>
 
-                    <img
+                    <StatusImage
                         src={currentImage.url}
                         alt={imageTitle}
-                        className="block object-contain"
+                        variant="large"
                         style={{ width: `${imageDisplaySize.width}px`, height: `${imageDisplaySize.height}px` }}
-                        loading="lazy"
-                        onLoad={(event) => {
-                            const element = event.currentTarget;
+                        imgClassName="block h-full w-full object-contain"
+                        lazy
+                        onLoad={(element) => {
                             const width = element.naturalWidth;
                             const height = element.naturalHeight;
                             const url = element.getAttribute('src') ?? '';
@@ -969,9 +971,9 @@ const MermaidPreviewDialog: React.FC<{
                             {status === 'ready' && (
                                 <div ref={mermaidPreviewRef} className="h-full">
                                     <SimpleMarkdownRenderer
+                                        singleTilde={false}
                                         content={mermaidMarkdown}
                                         variant="tool"
-                                        allowMermaidWheelEvents
                                         className="markdown-mermaid-fullscreen h-full"
                                         mermaidControls={mermaidControls}
                                         enableFileReferences={false}
@@ -1036,7 +1038,7 @@ const ToolOutputDialog: React.FC<ToolOutputDialogProps> = ({ popup, onOpenChange
                     </div>
                 </div>
                 <div className="flex-1 min-h-0 rounded-xl oc-tile overflow-hidden">
-                    <div className="tool-output-surface h-full max-h-[75vh] overflow-y-auto px-3 pe-4">
+                    <ScrollableOverlay outerClassName="h-full max-h-[75vh]" className="tool-output-surface px-3 pe-4" disableHorizontal>
                         {popup.metadata?.input && typeof popup.metadata.input === 'object' &&
                             Object.keys(popup.metadata.input).length > 0 &&
                             popup.metadata?.tool !== 'patch' ? (() => {
@@ -1051,7 +1053,7 @@ const ToolOutputDialog: React.FC<ToolOutputDialogProps> = ({ popup, onOpenChange
                                 // v2 file tools report `path`.
                                 const writeTarget = getInputValue('path') || getInputValue('filePath') || getInputValue('file_path') || '';
                                 return (
-                                <div className="border-b border-border/20 p-4 -mx-3">
+                                <div className="border-b border-edge-muted p-4 -mx-3">
                                     <div className="typography-markdown font-medium text-muted-foreground mb-2 px-3">
                                         {isShellTool(metaTool)
                                             ? 'Command:'
@@ -1142,7 +1144,7 @@ const ToolOutputDialog: React.FC<ToolOutputDialogProps> = ({ popup, onOpenChange
                                 if (isSubagentTool(tool) || tool === 'reasoning') {
                                     return (
                                         <div className={tool === 'reasoning' ? "text-muted-foreground" : ""}>
-                                            <SimpleMarkdownRenderer content={popup.content} variant="tool" />
+                                            <SimpleMarkdownRenderer content={popup.content} singleTilde={false} variant="tool" />
                                         </div>
                                     );
                                 }
@@ -1194,7 +1196,7 @@ const ToolOutputDialog: React.FC<ToolOutputDialogProps> = ({ popup, onOpenChange
                             <div className="typography-meta">{t('chat.toolOutputDialog.noOutputProduced')}</div>
                         </div>
                     )}
-                    </div>
+                    </ScrollableOverlay>
                 </div>
             </DialogContent>
         </Dialog>

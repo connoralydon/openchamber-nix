@@ -40,6 +40,28 @@ const QUESTIONS = {
 };
 
 const QUESTION_IDS = Object.keys(QUESTIONS);
+
+/**
+ * How the agent ends a goal turn, sent with the goal's first turn and every
+ * continuation. Each report line answers one question above, so the check
+ * reads the agent's own words for it, and "nothing" is said out loud rather
+ * than left to be inferred. User-side steps get no line, since they do not
+ * keep a goal open (the `remaining` and `needs_user` criteria).
+ *
+ * Commands that never finish are stopped every turn, with no exception: the
+ * loop waits for a background command started in the round (`runtime.js`), and
+ * a server left running would hold every round for the full wait.
+ */
+export const GOAL_REPORT_INSTRUCTIONS = [
+  'Before you end a turn, stop every background command you started that does not finish on its own, such as a dev server or a watcher. Start it again in a later turn if you need it.',
+  '',
+  'Progress is checked independently after each turn, from your final message only. End every turn with a short status block, in the language of your reply, with exactly these four lines:',
+  '- Done: what is finished.',
+  '- Verified: how you checked it (the command, test or file), or "not verified".',
+  '- Remaining: the parts of the objective you still have to do yourself, or "nothing".',
+  '- Needs from the user: what only the user can provide before you can go on (a decision, credentials, access), or "nothing".',
+  'Testing in the app, review and committing are the user\'s steps after the work, not remaining work and not blockers.',
+].join('\n');
 const THRESHOLD = 0.5;
 
 // The report sits at the end of a turn, so a long turn keeps its opening and,

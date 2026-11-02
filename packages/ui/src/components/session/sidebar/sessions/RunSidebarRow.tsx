@@ -283,7 +283,8 @@ function RunSidebarRowComponent({
             if (isRowBoxClick(event)) openRun();
           }}
           className={cn(
-            'group/run relative my-0.5 flex cursor-pointer select-none items-center rounded-md py-1.5 pe-2.5',
+            'group/run relative my-0.5 flex cursor-pointer select-none items-center rounded-md pe-2.5',
+            detailed ? 'py-1.5' : 'py-[5px]',
             !detailed && 'gap-1.5',
             isActive ? 'bg-interactive-selection/70 text-interactive-selection-foreground' : 'hover:bg-interactive-hover/60',
           )}

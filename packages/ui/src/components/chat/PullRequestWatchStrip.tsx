@@ -35,7 +35,7 @@ export const PullRequestWatchStrip = memo(({ sessionId }: { sessionId: string | 
   };
 
   return (
-    <div role="status" className="flex oc-composer-row min-w-0 items-center gap-2 border-b border-border/60 ps-3 pe-1.5" title={watch.title || undefined}>
+    <div role="status" className="flex oc-composer-row min-w-0 items-center gap-2 border-b border-edge ps-3 pe-1.5" title={watch.title || undefined}>
       <Icon name="git-pull-request" className="size-3.5 flex-shrink-0 text-muted-foreground" aria-hidden="true" />
       <span className="min-w-0 flex-1 truncate text-sm text-foreground">
         {t('chat.prWatch.title', { number: watch.number })}

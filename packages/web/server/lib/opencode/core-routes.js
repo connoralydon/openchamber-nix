@@ -675,9 +675,12 @@ export const registerAuthAndAccessRoutes = (app, dependencies) => {
    */
   const selfAuthenticatedApiPaths = new Set(['/api/git/repository-credential']);
 
+  // An extension tracker's OAuth callback (`/tracker/ext-<id>/oauth/callback`)
+  // is the same kind of page: the tracker redirects the browser here with no
+  // UI bearer, and the route accepts only a `state` this process issued.
   const isGuestOauthCallback = (req) => (
     req.method === 'GET'
-    && /^\/guests\/[a-z][a-z0-9-]*\/oauth\/callback$/.test(req.path || '')
+    && /^\/(?:guests\/[a-z][a-z0-9-]*|tracker\/ext-[a-z][a-z0-9-]*)\/oauth\/callback$/.test(req.path || '')
   );
 
   // An HTML preview runs in an opaque-origin sandbox and carries no session.
@@ -1217,6 +1220,7 @@ export const registerCommonRequestMiddleware = (app, dependencies) => {
       req.path.startsWith('/api/config/plugins') ||
       req.path.startsWith('/api/config/websearch') ||
       req.path.startsWith('/api/config/warming') ||
+      req.path === '/api/config/compaction' ||
       req.path.startsWith('/api/session-warming') ||
       req.path.startsWith('/api/projects') ||
       req.path.startsWith('/api/fs') ||

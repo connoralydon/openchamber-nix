@@ -19,6 +19,8 @@ import { resolveNpmRegistryRequest } from '../../web/server/lib/opencode/npm-reg
 import { writeFileAtomic } from '../../web/server/lib/opencode/atomic-write.js';
 import { toLoadablePluginSpec } from '../../web/server/lib/opencode/loadable-plugin-spec.js';
 import { isGitSpec, isPluginControlSpec } from '../../web/server/lib/opencode/plugin-spec.js';
+import { mergeCustomProviderConfig, validateCustomProviderConfig } from '../../web/server/lib/opencode/providers.js';
+import { canonicalPluginPath, resolveLocalPluginPath } from '../../web/server/lib/opencode/plugin-paths.js';
 import {
   toAgentEntity,
   fromAgentEntity,
@@ -27,10 +29,7 @@ import {
   fromCommandEntity,
   isLegacyCommandFrontmatter,
   toMcpEntity,
-  toProviderEntity,
   readStoredProviderEntry,
-  toProviderPackage,
-  toNpmPackage,
   toPluginEntity,
   fromPluginEntity,
   readPluginList,
@@ -49,6 +48,8 @@ import {
   formatModelSelection,
   writeWebSearchSelection,
   writeWarmingEnabled,
+  writeCompactionSettings,
+  type CompactionUpdate,
   writeSkillDisabled,
   findWebSearchProjectOverride,
   type AgentEntity,
@@ -116,6 +117,7 @@ export type PluginEntry = {
   scope: PluginScope;
   kind: 'config';
   parsedKind: PluginParsedKind;
+  resolvedPath?: string;
 };
 
 export type PluginFile = {
@@ -123,6 +125,8 @@ export type PluginFile = {
   fileName: string;
   scope: PluginScope;
   kind: 'file';
+  absolutePath: string;
+  resolvedPath?: string;
 };
 
 export type PluginRegistryResult =
@@ -951,15 +955,31 @@ const deepEqualJsonValue = (a: JsonValue, b: JsonValue): boolean => {
 };
 
 // Structural diff between the parsed on-disk config and the desired config.
-// Object keys are compared per key (order-insensitive); arrays and scalars are
-// replaced whole. The desired config must already be JSON-normalized (no
-// `undefined` values), so absent keys are the only removal signal.
+// Equal-length arrays keep their indices unless a retained value moves between
+// changed positions. Resized arrays and scalars are replaced whole. The desired
+// config must already be JSON-normalized, so absent keys signal removals.
 const collectConfigEdits = (
   current: JsonValue,
   next: JsonValue,
   basePath: JSONPath,
   edits: ConfigEdit[],
 ): void => {
+  if (Array.isArray(current) && Array.isArray(next) && current.length === next.length) {
+    const changedIndices: number[] = [];
+    for (let index = 0; index < current.length; index += 1) {
+      if (!deepEqualJsonValue(current[index], next[index])) changedIndices.push(index);
+    }
+    const reordered = changedIndices.some((index) => changedIndices.some((otherIndex) => (
+      index !== otherIndex && deepEqualJsonValue(current[index], next[otherIndex])
+    )));
+    if (!reordered) {
+      for (const index of changedIndices) {
+        collectConfigEdits(current[index], next[index], [...basePath, index], edits);
+      }
+      return;
+    }
+  }
+
   if (!isJsonObject(current) || !isJsonObject(next)) {
     if (!deepEqualJsonValue(current, next)) {
       edits.push({ type: 'set', path: basePath, value: next });
@@ -1265,18 +1285,13 @@ const isExactPluginSemver = (version: string): boolean => /^\d+\.\d+\.\d+([-+][\
 const getActiveCustomConfigPath = (): string | null =>
   process.env.OPENCODE_CONFIG ? path.resolve(process.env.OPENCODE_CONFIG) : null;
 
-const getActiveOpencodeConfigDir = (): string => {
-  const customConfigPath = getActiveCustomConfigPath();
-  return customConfigPath ? path.dirname(customConfigPath) : OPENCODE_CONFIG_DIR;
-};
-
-const getActiveUserConfigPaths = (): string[] => {
-  const configDir = getActiveOpencodeConfigDir();
-  return [
-    path.join(configDir, 'opencode.json'),
-    path.join(configDir, 'opencode.jsonc'),
-  ];
-};
+// `OPENCODE_CONFIG` is one more file OpenCode reads on top of the global
+// config; the global config folder stays where it is, and OpenCode never scans
+// a `plugins/` folder next to the `OPENCODE_CONFIG` file.
+const getActiveUserConfigPaths = (): string[] => [
+  path.join(OPENCODE_CONFIG_DIR, 'opencode.json'),
+  path.join(OPENCODE_CONFIG_DIR, 'opencode.jsonc'),
+];
 
 const getActivePrimaryUserConfigPath = (): string => {
   const [defaultPath, ...fallbackPaths] = getActiveUserConfigPaths();
@@ -1293,14 +1308,20 @@ const ensureProjectPluginConfigPath = (workingDirectory?: string | null): string
   return path.join(workingDirectory, '.opencode', 'opencode.json');
 };
 
+/**
+ * The config files OpenCode 2 takes plugins from, in its load order: the global
+ * file, then `OPENCODE_CONFIG`, then the project file. Each one adds its own
+ * entries; `OPENCODE_CONFIG` replaces none of the global ones.
+ */
 const getPluginConfigSources = (workingDirectory?: string | null): Array<{ scope: PluginScope; path: string; config: Record<string, unknown> }> => {
   const customPath = getActiveCustomConfigPath();
   const userPath = getActivePrimaryUserConfigPath();
   const projectPath = getProjectConfigPath(workingDirectory || undefined);
   return [
-    customPath
-      ? { scope: 'user', path: customPath, config: readConfigLayer(customPath).config }
-      : { scope: 'user', path: userPath, config: readConfigLayer(userPath).config },
+    { scope: 'user', path: userPath, config: readConfigLayer(userPath).config },
+    ...(customPath
+      ? [{ scope: 'user' as const, path: customPath, config: readConfigLayer(customPath).config }]
+      : []),
     ...(projectPath
       ? [{ scope: 'project' as const, path: projectPath, config: readConfigLayer(projectPath).config }]
       : []),
@@ -1361,7 +1382,11 @@ const getPluginTarget = (id: string, workingDirectory?: string | null): null | {
     throw codedError('Plugin entry id must use config prefix', 'INVALID_SPEC');
   }
   const { scope, rest: spec } = parsePluginIdValue(decoded.value);
-  const source = getPluginConfigSources(workingDirectory).find((candidate) => candidate.scope === scope);
+  // Two user files can both declare the spec; the later one is the entry the
+  // list shows, so it is the one edited.
+  const source = getPluginConfigSources(workingDirectory).reverse().find((candidate) => (
+    candidate.scope === scope && hasPluginSpec(readPluginArray(candidate.config), spec)
+  ));
   if (!source) return null;
   const plugin = readPluginArray(source.config);
   const index = plugin.findIndex((raw) => {
@@ -1377,7 +1402,11 @@ const getPluginTarget = (id: string, workingDirectory?: string | null): null | {
 
 export const listPluginEntries = (workingDirectory?: string): PluginEntry[] => {
   const entries: PluginEntry[] = [];
+  const seenSources = new Set<string>();
   for (const source of getPluginConfigSources(workingDirectory)) {
+    const sourcePath = canonicalPluginPath(source.path);
+    if (source.scope === 'project' && seenSources.has(sourcePath)) continue;
+    seenSources.add(sourcePath);
     for (const item of readPluginList(source.config)) {
       const entry: PluginEntry = {
         id: encodePluginId('config', `${source.scope}:${item.entry.package}`),
@@ -1385,12 +1414,15 @@ export const listPluginEntries = (workingDirectory?: string): PluginEntry[] => {
         scope: source.scope,
         kind: 'config',
         parsedKind: pluginParsedKind(item.entry.package),
+        resolvedPath: resolveLocalPluginPath(item.entry.package, source.path),
       };
       if (item.entry.options) entry.options = item.entry.options;
       entries.push(entry);
     }
   }
-  return entries;
+  // A spec in both the global file and `OPENCODE_CONFIG` shares one id; the
+  // `OPENCODE_CONFIG` entry is listed, matching `getPluginTarget`.
+  return [...new Map(entries.map((entry) => [entry.id, entry])).values()];
 };
 
 export const getPluginEntry = (id: string, workingDirectory?: string): PluginEntry | null =>
@@ -1403,10 +1435,9 @@ export const createPluginEntry = (entry: { spec?: unknown; options?: unknown; sc
   if (sources.some((source) => source.scope === scope && hasPluginSpec(readPluginArray(source.config), spec))) {
     throw codedError(`Plugin "${spec}" already exists`, 'ENTRY_EXISTS');
   }
-  const userSource = sources.find((source) => source.scope === 'user');
   const targetPath = scope === 'project'
     ? ensureProjectPluginConfigPath(workingDirectory)
-    : userSource?.path ?? getActivePrimaryUserConfigPath();
+    : getActiveCustomConfigPath() ?? getActivePrimaryUserConfigPath();
   const config = fs.existsSync(targetPath) ? readConfigFile(targetPath) : {};
   const plugin = readPluginArray(config);
   writeConfig(writePluginArray(config, [...plugin, serializePluginEntry({ spec, options: entry.options })]), targetPath);
@@ -1437,7 +1468,7 @@ const getPluginDir = (scope: PluginScope, workingDirectory?: string | null): str
     if (!workingDirectory) throw codedError('Project plugin scope requires working directory', 'INVALID_SCOPE');
     return path.join(workingDirectory, '.opencode', 'plugins');
   }
-  return path.join(getActiveOpencodeConfigDir(), 'plugins');
+  return path.join(OPENCODE_CONFIG_DIR, 'plugins');
 };
 
 const getPluginFileTarget = (id: string, workingDirectory?: string): { scope: PluginScope; fileName: string; filePath: string } => {
@@ -1469,6 +1500,8 @@ export const listPluginDirFiles = (workingDirectory?: string): PluginFile[] => {
           fileName,
           scope,
           kind: 'file',
+          absolutePath: path.join(dir, fileName),
+          resolvedPath: canonicalPluginPath(path.join(dir, fileName)),
         });
       } catch {
         // Ignore unsupported files in the plugins directory.
@@ -1945,6 +1978,15 @@ export const setWarmingEnabled = (enabled: boolean): { changed: boolean } => {
   return { changed };
 };
 
+/** Mirror of the web server's `setCompactionSettings`: same target file as the web search choice. */
+export const setCompactionSettings = (update: CompactionUpdate) => {
+  const layers = readConfigLayers();
+  const target = getJsonWriteTarget(layers, AGENT_SCOPE.USER);
+  const changed = writeCompactionSettings(target.config, update);
+  if (changed) writeConfig(target.config, target.path);
+  return { changed };
+};
+
 /** A config file to clear a skill's deny from, or null when it cannot be parsed: it is skipped, never rewritten. */
 const readConfigFileForSkillSwitch = (filePath: string) => {
   try {
@@ -1993,27 +2035,15 @@ export const getWebSearchSource = (workingDirectory?: string) => ({
   projectPath: findWebSearchProjectOverride(readConfigLayers(workingDirectory), readProjectConfigFiles(workingDirectory)),
 });
 
-const PROJECT_CONFIG_NAMES = [
-  path.join('.opencode', 'opencode.jsonc'),
-  path.join('.opencode', 'opencode.json'),
-  'opencode.jsonc',
-  'opencode.json',
-];
 
-/** Mirror of the web server's `readProjectConfigFiles`: existing project configs, deepest first; unreadable ones skipped. */
+/** Mirror of the web server's `readProjectConfigFiles`: project configs, the winning one first; unreadable ones skipped. */
 const readProjectConfigFiles = (workingDirectory?: string): Array<{ path: string; config: Record<string, unknown> }> => {
-  if (!workingDirectory) return [];
-  const root = findWorktreeRoot(workingDirectory) || path.resolve(workingDirectory);
   const files: Array<{ path: string; config: Record<string, unknown> }> = [];
-  for (const base of getAncestors(workingDirectory, root)) {
-    for (const name of PROJECT_CONFIG_NAMES) {
-      const filePath = path.join(base, name);
-      if (!fs.existsSync(filePath)) continue;
-      try {
-        files.push({ path: filePath, config: readConfigFile(filePath) });
-      } catch {
-        // Skipped: an unreadable file can't be told apart from one without the key.
-      }
+  for (const filePath of getFolderConfigPaths(workingDirectory).reverse()) {
+    try {
+      files.push({ path: filePath, config: readConfigFile(filePath) });
+    } catch {
+      // Skipped: an unreadable file can't be told apart from one without the key.
     }
   }
   return files;
@@ -2655,165 +2685,8 @@ export const removeProviderConfig = (providerId: string, workingDirectory?: stri
   return true;
 };
 
-const PROVIDER_ID_PATTERN = /^[a-z0-9][a-z0-9-_]*$/;
-const BASE_URL_PATTERN = /^https?:\/\//;
-const OPENAI_COMPATIBLE_NPM = '@ai-sdk/openai-compatible';
-const CUSTOM_PROVIDER_NPM_PACKAGES = new Set([
-  OPENAI_COMPATIBLE_NPM,
-  '@ai-sdk/openai',
-  '@ai-sdk/anthropic',
-]);
-
 export type JsonValue = string | number | boolean | null | JsonObject | JsonValue[];
 export type JsonObject = { [key: string]: JsonValue };
-type NormalizedCustomProviderConfig = {
-  package: string;
-  name: string;
-  settings: Record<string, unknown> & { baseURL: string };
-  headers?: Record<string, string>;
-  models: Record<string, { modelID: string; name: string }>;
-  env?: string[];
-};
-
-/**
- * Accepts the v2 spelling (`package`, `settings.baseURL`) and the v1 spelling
- * (`npm`, `options.baseURL`); the normalized value is always v2.
- */
-export const validateCustomProviderConfig = (
-  providerId: string,
-  config: unknown,
-  options: { hasStoredAuth?: boolean } = {},
-) => {
-  if (!providerId || typeof providerId !== 'string' || !PROVIDER_ID_PATTERN.test(providerId)) {
-    return { ok: false as const, error: 'Provider ID must match /^[a-z0-9][a-z0-9-_]*$/' };
-  }
-
-  if (!isPlainObject(config)) {
-    return { ok: false as const, error: 'Provider config must be an object' };
-  }
-
-  const name = typeof config.name === 'string' ? config.name.trim() : '';
-  if (!name) {
-    return { ok: false as const, error: 'Provider name is required' };
-  }
-
-  const npm = toNpmPackage(config.package ?? config.npm) || OPENAI_COMPATIBLE_NPM;
-  if (!CUSTOM_PROVIDER_NPM_PACKAGES.has(npm)) {
-    return {
-      ok: false as const,
-      error: 'Custom providers must use @ai-sdk/openai-compatible, @ai-sdk/openai, or @ai-sdk/anthropic',
-    };
-  }
-
-  const settingsBlock = isPlainObject(config.settings)
-    ? config.settings
-    : (isPlainObject(config.options) ? config.options : null);
-  if (!settingsBlock) {
-    return { ok: false as const, error: 'Provider settings are required' };
-  }
-
-  const baseURL = typeof settingsBlock.baseURL === 'string' ? settingsBlock.baseURL.trim() : '';
-  if (!baseURL) {
-    return { ok: false as const, error: 'Base URL is required' };
-  }
-  if (!BASE_URL_PATTERN.test(baseURL)) {
-    return { ok: false as const, error: 'Base URL must start with http:// or https://' };
-  }
-
-  const models = isPlainObject(config.models) ? config.models : null;
-  if (!models || Object.keys(models).length === 0) {
-    return { ok: false as const, error: 'At least one model is required' };
-  }
-
-  const normalizedModels: Record<string, { modelID: string; name: string }> = {};
-  for (const [modelId, modelValue] of Object.entries(models)) {
-    const trimmedId = typeof modelId === 'string' ? modelId.trim() : '';
-    if (!trimmedId) {
-      return { ok: false as const, error: 'Model id is required' };
-    }
-    if (!isPlainObject(modelValue)) {
-      return { ok: false as const, error: `Model "${trimmedId}" must be an object` };
-    }
-    const modelName = typeof modelValue.name === 'string' ? modelValue.name.trim() : '';
-    if (!modelName) {
-      return { ok: false as const, error: `Model "${trimmedId}" requires a name` };
-    }
-    normalizedModels[trimmedId] = { modelID: trimmedId, name: modelName };
-  }
-
-  const normalized: NormalizedCustomProviderConfig = {
-    package: toProviderPackage(npm) as string,
-    name,
-    settings: { baseURL },
-    models: normalizedModels,
-  };
-
-  let env: string[] = [];
-  if (Array.isArray(config.env)) {
-    env = config.env
-      .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
-      .map((entry) => entry.trim());
-    if (env.length > 0) {
-      normalized.env = env;
-    }
-  }
-
-  if (env.length === 0 && !options.hasStoredAuth) {
-    return { ok: false as const, error: 'API key or {env:VAR} credentials are required' };
-  }
-
-  const headerSource = isPlainObject(config.headers) ? config.headers : settingsBlock.headers;
-  if (isPlainObject(headerSource)) {
-    const headers: Record<string, string> = {};
-    for (const [headerKey, headerValue] of Object.entries(headerSource)) {
-      if (typeof headerKey !== 'string' || !headerKey.trim()) {
-        continue;
-      }
-      if (typeof headerValue !== 'string' || !headerValue.trim()) {
-        return { ok: false as const, error: `Header "${headerKey}" requires a non-empty value` };
-      }
-      headers[headerKey.trim()] = headerValue.trim();
-    }
-    if (Object.keys(headers).length > 0) {
-      normalized.headers = headers;
-    }
-  }
-
-  return { ok: true as const, value: { providerId, config: normalized } };
-};
-
-const mergeCustomProviderConfig = (
-  existingValue: unknown,
-  normalizedConfig: NormalizedCustomProviderConfig,
-) => {
-  // Read the existing entry through the v2 projection so a legacy
-  // `npm`/`api`/`options` block is carried forward in native shape.
-  const existing = toProviderEntity(existingValue);
-  const mergedSettings = { ...(existing.settings ?? {}), ...normalizedConfig.settings };
-
-  const existingModels = isPlainObject(existing.models) ? existing.models : {};
-  const mergedModels = Object.fromEntries(
-    Object.entries(normalizedConfig.models).map(([modelId, normalizedModel]) => {
-      const existingModel = isPlainObject(existingModels[modelId]) ? existingModels[modelId] : {};
-      return [modelId, { ...existingModel, ...normalizedModel }];
-    }),
-  );
-
-  const merged: Record<string, unknown> = {
-    ...existing,
-    ...normalizedConfig,
-    settings: mergedSettings,
-    models: mergedModels,
-  };
-  // Headers and env are explicit removals when the form omits them.
-  if (!Object.prototype.hasOwnProperty.call(normalizedConfig, 'headers')) {
-    delete merged.headers;
-  }
-  if (!Object.prototype.hasOwnProperty.call(normalizedConfig, 'env')) {
-    delete merged.env;
-  }
-  return toProviderEntity(merged);
-};
 
 export const upsertProviderConfig = (
   providerId: string,

@@ -102,7 +102,7 @@ export const SyncActions: React.FC<SyncActionsProps> = ({
   };
 
   return (
-    <div className="inline-flex items-center rounded-md border border-border/60 bg-[var(--surface-elevated)] overflow-hidden">
+    <div className="inline-flex items-center rounded-md border border-edge bg-[var(--surface-elevated)] overflow-hidden">
       <Tooltip>
         <TooltipTrigger asChild>
           <span className="inline-flex" tabIndex={blocksRebaseSync || detached ? 0 : undefined}>

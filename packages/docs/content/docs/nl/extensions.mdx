@@ -46,7 +46,10 @@ Een paneel tonen en lezen welk project en welke sessie geopend zijn, vereist gee
 - **Uw Small Model gebruiken:** eenmalige tekstgeneratie buiten uw sessies, met het model uit Instellingen → Sessies → Small Model. Dit verbruikt tokens.
 - **Verbinding maken met een externe dienst:** met het account dat u bij Instellingen → Integraties verbindt.
 - **Een sessiegesprek lezen:** alleen wanneer u de extensieactie op die sessie uitvoert.
-- **Een lokale service uitvoeren:** een apart programma met uw volledige gebruikerstoegang. Sta dit alleen toe als u de maker vertrouwt.
+- **Een lokale service uitvoeren:** een apart programma met uw volledige gebruikerstoegang. Sta dit alleen toe als u de maker vertrouwt. Wil de extensie te horen krijgen wat er in uw sessies gebeurt, dan noemt deze regel ook de momenten waarover ze wordt ingelicht: een beurt is afgerond, een beurt mislukt, de agent vraagt toestemming, de agent stelt een vraag. Ze hoort ervan in elk project, zonder geopend venster, en krijgt alleen identificatiegegevens: de sessie, het project en de items die u eraan hebt gekoppeld.
+- **Lezen wat de agent op de achtergrond zegt:** het eindantwoord van elke beurt, de vragen die de agent stelt en waarvoor hij toestemming vraagt, in elk project, verstuurd naar de lokale service van de extensie. Sta dit alleen toe als u vertrouwt waar de extensie het naartoe stuurt.
+
+Een extensie die uw meldingen bezorgt, aan Slack, Matrix of een eigen server, zegt dat ook onder **Een lokale service uitvoeren**, met een regel die begint met **Bezorgt uw meldingen**. Er gaat niets uit totdat u er een account voor verbindt bij [Instellingen → Integraties](/nl/integrations/#meldingskanalen-van-extensies). Daarna krijgt ze wat uw telefoon zou krijgen, en de extensie pauzeren stopt het.
 
 Vraagt een nieuwe versie om meer rechten dan u eerder toestond, dan toont de kaart **Goedkeuring nodig** en **Rechten bekijken**. De extensie blijft uit totdat u de nieuwe lijst goedkeurt.
 
@@ -71,6 +74,18 @@ Uw token blijft in OpenChamber. De extensie vraagt OpenChamber om de host voor h
 Pauzeert u de extensie, dan verdwijnt de host tot u haar weer inschakelt, en uw account blijft bewaard. Verwijdert u de extensie, dan wordt het account vergeten. VS Code toont geen Git-hosts van extensies.
 
 De OpenChamber SDK bevat een werkend voorbeeld, `examples/source-control-provider`, om mee te beginnen als u er zelf een bouwt. Zie [Een extensie bouwen](/nl/sdk/).
+
+## Een extensie als tracker
+
+Een extensie kan een tracker voor werkitems toevoegen naast Linear: YouTrack, Jira, Plane of een eigen tracker. Het toestemmingsvenster heeft dan een regel die begint met **Werkt als de tracker** en de tracker noemt. De regel zegt ook wat OpenChamber ernaartoe stuurt: uw zoekopdrachten en de items die u opent, en dat hij wordt gevraagd hun status te wijzigen en namens u sessiereacties te plaatsen.
+
+Staat u het toe, dan krijgt de tracker een eigen kaart bij **Instellingen → Integraties** onder **Extensieaccounts**. Verbind daar een account: met een token, of door in de browser in te loggen nadat u de client-ID hebt ingevoerd van de app die u bij de tracker hebt geregistreerd, en eerst het adres van de server als de kaart daarom vraagt. Daarna staan zijn items overal waar die van Linear staan: in het menu **+** van de chat en de kiezer, in New Worktree, bij de gekoppelde items van een sessie en in de livestatus van items die u volgt. Een geplakte link naar een van zijn items wordt op dezelfde manier herkend. Wat elk hiervan doet, staat bij [Linear](/nl/integrations/#linear).
+
+Uw tokens blijven in OpenChamber. De extensie vraagt OpenChamber om de tracker voor haar aan te roepen, en OpenChamber voegt de inloggegevens aan elke aanroep toe, alleen voor de server die u hebt verbonden. De extensie krijgt ze nooit, en alleen haar aanroepen voor statuswijzigingen en reacties mogen daar iets schrijven.
+
+Pauzeert u de extensie, dan verdwijnt de tracker tot u haar weer inschakelt, en uw accounts blijven bewaard. Verwijdert u de extensie, dan worden ze vergeten. VS Code toont geen trackers; op de telefoon worden de items van de tracker getoond, en accounts verbindt u vanuit de web- of desktop-app.
+
+De OpenChamber SDK bevat een werkend voorbeeld, `examples/tracker-provider`, met een neptracker om ernaast te draaien. Zie [Een extensie bouwen](/nl/sdk/).
 
 ## Het account verbinden
 

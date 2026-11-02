@@ -65,7 +65,7 @@ export const SettingsPageLayout: React.FC<SettingsPageLayoutProps> = ({
 
   return (
     <ScrollableOverlay
-      outerClassName={cn('h-full overlay-scrollbar-wrapper--stable-gutter', outerClassName)}
+      outerClassName={cn('h-full', outerClassName)}
       className={cn('w-full @container', fillHeight && 'flex flex-col')}
       verticalTrackStart={scrollbarTopClearance}
     >

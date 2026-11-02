@@ -31,6 +31,7 @@ import { useDeviceInfo } from '@/lib/device';
 import { sessionEvents } from '@/lib/sessionEvents';
 import { useI18n } from '@/lib/i18n';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 
 const renderToastDescription = (text?: string) =>
     text ? <span className="oc-title-rest">{text}</span> : undefined;
@@ -623,7 +624,7 @@ export const SessionDialogs: React.FC = () => {
         <div className={cn(isWorktreeDelete ? 'space-y-3' : 'space-y-2')}>
             {deleteDialog.sessions.length > 0 && (
                 <div className={cn(
-                    isWorktreeDelete ? 'rounded-lg bg-muted/30 p-3' : 'space-y-1.5 rounded-xl border border-border/40 bg-sidebar/60 p-3'
+                    isWorktreeDelete ? 'rounded-lg bg-muted/30 p-3' : 'space-y-1.5 rounded-xl border border-edge-muted bg-sidebar/60 p-3'
                 )}>
                     {isWorktreeDelete && (
                         <div className="flex items-center gap-2">
@@ -688,7 +689,7 @@ export const SessionDialogs: React.FC = () => {
 
                 </div>
             ) : (
-                <div className="rounded-xl border border-border/40 bg-sidebar/60 p-3">
+                <div className="rounded-xl border border-edge-muted bg-sidebar/60 p-3">
                     <p className="typography-meta text-muted-foreground">
                         {t('sessions.sidebar.sessionDialogs.delete.note')}
                     </p>
@@ -851,9 +852,13 @@ export const SessionDialogs: React.FC = () => {
                             </DialogTitle>
                             {deleteDialogDescription && <DialogDescription>{deleteDialogDescription}</DialogDescription>}
                         </DialogHeader>
-                        <div className={cn(isWorktreeDelete && 'flex-1 min-h-0 overflow-y-auto space-y-2')}>
-                            {deleteDialogBody}
-                        </div>
+                        {isWorktreeDelete ? (
+                            <ScrollableOverlay outerClassName="flex-1 min-h-0" className="space-y-2" disableHorizontal>
+                                {deleteDialogBody}
+                            </ScrollableOverlay>
+                        ) : (
+                            <div>{deleteDialogBody}</div>
+                        )}
                         <DialogFooter className="mt-2 gap-2 pt-1 pb-1">{deleteDialogActions}</DialogFooter>
                     </DialogContent>
                 </Dialog>

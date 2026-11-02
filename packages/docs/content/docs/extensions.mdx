@@ -46,7 +46,10 @@ Showing a panel and reading which project and session are open needs no permissi
 - **Use your Small Model**: one-off text generation outside your sessions, with the model from Settings → Sessions → Small Model. Costs tokens.
 - **Connect to an external service**: with the account you connect in Settings → Integrations.
 - **Read a session's conversation**: only when you run the extension's action on that session.
-- **Run a local service**: a separate program with your full user access. Allow it only if you trust the author.
+- **Run a local service**: a separate program with your full user access. Allow it only if you trust the author. When the extension wants to be told what happens in your sessions, this line also lists the moments it hears about: a turn finishes, a turn fails, the agent asks permission, the agent asks a question. It hears about them in every project, with no window open, and gets only identifiers: the session, its project, and the items you linked to it.
+- **Read what the agent says in the background**: the final answer of each turn, the questions the agent asks and what it asks permission for, in every project, sent to the extension's local service. Allow it only if you trust where the extension sends it.
+
+An extension that delivers your notifications, to Slack, Matrix or a server of its own, says so under **Run a local service** too, with a line that starts with **Delivers your notifications**. Nothing goes out until you connect an account for it in [Settings → Integrations](/integrations/#extension-notification-channels); after that it gets what your phone would, and pausing the extension stops it.
 
 When a newer version asks for more than you allowed, the card shows **Needs approval** and a **Review permissions** button. Until you allow the new list, that extension stays off.
 
@@ -71,6 +74,18 @@ Your token stays in OpenChamber. The extension asks OpenChamber to call the host
 Pausing the extension takes the host away until you turn it back on, and your account stays. Removing the extension forgets the account. VS Code doesn't show git hosts from extensions.
 
 The OpenChamber SDK has a working example, `examples/source-control-provider`, to start from when building one. See [Build an extension](/sdk/).
+
+## An extension as a tracker
+
+An extension can add a work item tracker next to Linear: YouTrack, Jira, Plane, or a tracker of its own. Its permission dialog then has a line that starts with **Acts as the tracker** and names it. The line also says what OpenChamber sends it: your searches and the items you open, and that it is asked to change their state and post session comments for you.
+
+Once you allow it, the tracker gets its own card in **Settings → Integrations** under **Extension accounts**. Connect an account there: with a token, or by signing in in the browser after you enter the client id of the app you registered with the tracker, and the server's address first if the card asks for one. After that its items are wherever Linear's are: the chat's **+** menu and the picker, New Worktree, the linked items of a session, and the live states of items you follow. A pasted link to one of its items is recognised the same way. See [Linear](/integrations/#linear) for what each of these does.
+
+Your tokens stay in OpenChamber. The extension asks OpenChamber to call the tracker for it, and OpenChamber adds the credential to each call, only for the server you connected. The extension never receives it, and only its state change and comment calls may write anything there.
+
+Pausing the extension takes the tracker away until you turn it back on, and your accounts stay. Removing the extension forgets them. VS Code shows no trackers; on the phone the tracker's items show, and accounts are connected from the web or desktop app.
+
+The OpenChamber SDK has a working example, `examples/tracker-provider`, with a fake tracker to run beside it. See [Build an extension](/sdk/).
 
 ## Connect its account
 

@@ -10,6 +10,7 @@
  */
 
 import React from 'react';
+import { useWidthMorph } from '@/lib/motion/useSizeMorph';
 
 import { Icon } from '@/components/icon/Icon';
 import { Input } from '@/components/ui/input';
@@ -42,7 +43,9 @@ import { useI18n } from '@/lib/i18n';
 import { matchesRankQuery, rankByQuery } from '@/lib/search/fuzzySearch';
 import { PROJECT_ICON_MAP, resolveProjectColor, ProjectIconImage } from '@/lib/projectMeta';
 import { createWorktreeDraft } from '@/lib/worktreeSessionCreator';
-import { shortcutRegistry } from '@/lib/shortcuts';
+import { formatShortcutForDisplay, getEffectiveShortcutCombo, shortcutRegistry } from '@/lib/shortcuts';
+import { TooltipLabelWithShortcut } from '@/components/ui/action-toolbar';
+import { useUIStore } from '@/stores/useUIStore';
 import { useKeybind } from '@/hooks/useKeybind';
 import type { Theme } from '@/types/theme';
 import { isSpaceDirectory } from '@/lib/spaces/space-route';
@@ -149,6 +152,7 @@ export function ProjectLabel({ project, theme }: { project: DraftTargetProject; 
 /** Desktop: inline project and branch selects. */
 function DraftTargetSelectorsView(props: DraftTargetProps) {
     const { t } = useI18n();
+    const shortcutOverrides = useUIStore((state) => state.shortcutOverrides);
     const {
         projects,
         selectedProject,
@@ -175,6 +179,9 @@ function DraftTargetSelectorsView(props: DraftTargetProps) {
     const [projectFocusReturn, setProjectFocusReturn] = React.useState(false);
     const projectTriggerRef = React.useRef<HTMLButtonElement>(null);
     const worktreeTriggerRef = React.useRef<HTMLButtonElement>(null);
+    // Another project or branch eases each picker into its new width.
+    useWidthMorph(projectTriggerRef);
+    useWidthMorph(worktreeTriggerRef);
     // Controlled Select closes can omit finalFocus's interaction type.
     const keyboardCloseRef = React.useRef(false);
     const getComposerInput = () => projectTriggerRef.current?.closest('form')?.querySelector<HTMLElement>('[data-chat-input="true"] .cm-content');
@@ -312,6 +319,8 @@ function DraftTargetSelectorsView(props: DraftTargetProps) {
                     if (open && openPicker === 'project') projectSearchRef.current?.focus();
                 }}
             >
+                <Tooltip>
+                <TooltipTrigger asChild>
                 <Popover.Trigger
                     render={
                         <Button
@@ -319,7 +328,7 @@ function DraftTargetSelectorsView(props: DraftTargetProps) {
                             variant="ghost"
                             size="sm"
                             aria-haspopup="dialog"
-                            className="h-7 min-w-0 w-fit max-w-[42vw] justify-start gap-1 px-1.5 normal-case hover:bg-transparent data-[popup-open]:bg-transparent sm:max-w-[18rem]"
+                            className="h-7 min-w-0 w-fit max-w-[42vw] justify-start gap-1 overflow-hidden px-1.5 normal-case hover:bg-transparent data-[popup-open]:bg-transparent sm:max-w-[18rem]"
                             onPointerDownCapture={(event) => syncProjectPopupContainers(event.currentTarget)}
                             onFocusCapture={(event) => syncProjectPopupContainers(event.currentTarget)}
                         />
@@ -332,6 +341,11 @@ function DraftTargetSelectorsView(props: DraftTargetProps) {
                         <Icon name="arrow-down-s" className="size-4 shrink-0 opacity-50" />
                     </span>
                 </Popover.Trigger>
+                </TooltipTrigger>
+                <TooltipContent side="top" sideOffset={8}>
+                    <TooltipLabelWithShortcut label={t('chat.chatInput.draftPicker.projectTitle')} shortcut={formatShortcutForDisplay(getEffectiveShortcutCombo('open_draft_project_picker', shortcutOverrides), '')} />
+                </TooltipContent>
+                </Tooltip>
                 <Popover.Portal container={projectPortalContainer ?? undefined}>
                     {/* The search field sits on the trigger's edge of the
                         popup and stays fixed while filtering; only the
@@ -448,8 +462,15 @@ function DraftTargetSelectorsView(props: DraftTargetProps) {
                             <SelectTrigger
                                 ref={worktreeTriggerRef}
                                 onKeyDown={handlePickerKeyDown}
-                                className="h-7 min-w-0 w-fit max-w-[48vw] sm:max-w-[20rem] bg-transparent dark:bg-transparent shadow-none px-1.5 hover:[background-image:none] data-[popup-open]:[background-image:none]"
+                                className="h-7 min-w-0 w-fit max-w-[48vw] overflow-hidden sm:max-w-[20rem] bg-transparent dark:bg-transparent shadow-none px-1.5 hover:[background-image:none] data-[popup-open]:[background-image:none]"
                             >
+                                {selectedIsSpace ? <Icon name="instance" className="size-3.5 shrink-0 text-muted-foreground" aria-label={t('sessions.sidebar.group.space')} /> : null}
+                                <SelectValue>
+                                    {selectedBranchLabel ?? t('chat.chatInput.branch')}
+                                </SelectValue>
+                                {/* After the name: the check answers once the branch is
+                                    picked, and a mark arriving at the start would push
+                                    the name over. Here the picker grows into it. */}
                                 {hasUncommittedChanges ? (
                                     <Icon
                                         name="alert"
@@ -457,17 +478,12 @@ function DraftTargetSelectorsView(props: DraftTargetProps) {
                                         aria-label={t('chat.draftDirtyNotice.indicatorAria')}
                                     />
                                 ) : null}
-                                {selectedIsSpace ? <Icon name="instance" className="size-3.5 shrink-0 text-muted-foreground" aria-label={t('sessions.sidebar.group.space')} /> : null}
-                                <SelectValue>
-                                    {selectedBranchLabel ?? t('chat.chatInput.branch')}
-                                </SelectValue>
                             </SelectTrigger>
                         </TooltipTrigger>
-                        {hasUncommittedChanges ? (
-                            <TooltipContent showArrow side="top" sideOffset={8} className="max-w-72">
-                                <span className="block whitespace-pre-line">{t('chat.draftDirtyNotice.tooltip')}</span>
-                            </TooltipContent>
-                        ) : null}
+                        <TooltipContent showArrow side="top" sideOffset={8} className="max-w-72">
+                            <TooltipLabelWithShortcut label={t('chat.chatInput.branch')} shortcut={formatShortcutForDisplay(getEffectiveShortcutCombo('open_draft_worktree_picker', shortcutOverrides), '')} />
+                            {hasUncommittedChanges ? <span className="block whitespace-pre-line">{t('chat.draftDirtyNotice.tooltip')}</span> : null}
+                        </TooltipContent>
                     </Tooltip>
                     <SelectContent side={worktreePopupSide} align="start" sideOffset={4} collisionAvoidance={{ side: 'none' }} constrainToMain className="w-max min-w-48" onKeyDown={handlePickerKeyDown} finalFocus={getFinalFocus}>
                         {projectRootBranchOption ? (

@@ -9,7 +9,6 @@ import { toast } from '@/components/ui';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { dropdownTriggerVariants } from '@/components/ui/dropdown-trigger';
-import { ScrollShadow } from '@/components/ui/ScrollShadow';
 import { ChangesPanel, type ChangesGroupConfig } from '@/components/views/git/ChangesPanel';
 import { BranchSelector } from '@/components/views/git/BranchSelector';
 import { ChangedPathLabel } from '@/components/views/git/ChangedPathLabel';
@@ -100,6 +99,7 @@ import { commitAndSwitchBranch } from './mobileDirtySwitch';
 import { useCommitCelebration } from '@/components/views/git/useCommitCelebration';
 import { useGitCleanLine } from '@/components/views/git/useGitCleanLine';
 import { normalizePath } from '@/lib/pathNormalization';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 
 type SyncAction = 'fetch' | 'pull' | 'sync' | 'publish' | null;
 type CommitAction = 'commit' | 'commitAndPush' | null;
@@ -186,8 +186,8 @@ interface MobileChangesPaneProps extends MobileChangesSurfaceProps {
 export const MobileChangesPane: React.FC<MobileChangesPaneProps> = ({ rootDirectory, repository, onClose, initialDiff, visible = true, onNavigatedToChat }) => {
   const { t } = useI18n();
   const { git, sourceControl } = useRuntimeAPIs();
-  // When the root is not itself a repository, changes come from the resolved
-  // nested repository instead.
+  // Changes come from the picked repository, or the root when nothing is
+  // picked.
   const { rootIsGitRepo, gitDirectory, nestedRepos, repositoryOptions } = repository;
   const currentDirectory = gitDirectory ?? rootDirectory;
   const status = useGitStatus(currentDirectory || null);
@@ -1264,7 +1264,7 @@ export const MobileChangesPane: React.FC<MobileChangesPaneProps> = ({ rootDirect
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background text-foreground">
       {networkDialogs}
-      <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border/60 px-3 py-2">
+      <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-edge px-3 py-2">
         {onClose ? (
           <button
             type="button"
@@ -1441,7 +1441,8 @@ export const MobileChangesPane: React.FC<MobileChangesPaneProps> = ({ rootDirect
               onVisiblePathsChange={setVisibleChangePaths}
             />
           </div>
-          <div className="shrink-0 border-t border-border/70 px-4 pb-4 pt-3">
+          {/* Held at the bottom of the panel: it rides the keyboard over the list. */}
+          <div data-keyboard-rider="" className="shrink-0 border-t border-edge bg-background px-4 pb-4 pt-3">
             <CommitSection
               stagedCount={stagedChangeEntries.length}
               commitMessage={commitMessage}
@@ -1564,7 +1565,7 @@ const MobileDiffDetail: React.FC<{
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background text-foreground">
-      <header className="flex h-[var(--oc-header-height,56px)] shrink-0 items-center gap-3 border-b border-border/70 px-3 text-foreground">
+      <header className="flex h-[var(--oc-header-height,56px)] shrink-0 items-center gap-3 border-b border-edge px-3 text-foreground">
         <button
           type="button"
           className="flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -1630,8 +1631,11 @@ const MobileDiffDetail: React.FC<{
         ) : isImageFile(path) && !diff.fileDiff ? (
           <MobileChangesState icon message={t('mobile.changes.diffDetail.imageUnavailable')} />
         ) : (
-          <ScrollShadow
-            className="h-full overflow-y-auto overflow-x-hidden p-3"
+          <ScrollableOverlay
+            outerClassName="h-full"
+            className="p-3"
+            useScrollShadow
+            disableHorizontal
             data-diff-virtual-root
             data-diff-virtual-content
           >
@@ -1650,7 +1654,7 @@ const MobileDiffDetail: React.FC<{
               pendingContextExpansion={pendingContextExpansion}
               contextLoading={contextLoading}
             />
-          </ScrollShadow>
+          </ScrollableOverlay>
         )}
       </div>
     </div>
@@ -1662,7 +1666,7 @@ type ComparisonFileListItem = { path: string; status: string; insertions: number
 const MobileComparisonFileList: React.FC<{ files: ComparisonFileListItem[]; onSelect: (path: string) => void }> = ({ files, onSelect }) => {
   const { t } = useI18n();
   return (
-    <ScrollShadow className="h-full overflow-y-auto overflow-x-hidden px-3 py-2">
+    <ScrollableOverlay outerClassName="h-full" className="px-3 py-2" useScrollShadow disableHorizontal>
       <ul aria-label={t('gitView.changes.changedFilesAria')} className="flex flex-col gap-1">
         {files.map((file) => {
           const statusLabel = file.status === 'A' ? t('diffView.change.new')
@@ -1682,6 +1686,6 @@ const MobileComparisonFileList: React.FC<{ files: ComparisonFileListItem[]; onSe
           </li>;
         })}
       </ul>
-    </ScrollShadow>
+    </ScrollableOverlay>
   );
 };

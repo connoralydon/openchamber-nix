@@ -3,11 +3,13 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { Window } from 'happy-dom';
 import type { Session } from '@/lib/opencode/model';
-import { CHAT_DRAFT_PROJECT_ID } from '@/lib/chatDirectories';
+import { CHAT_DRAFT_PROJECT_ID, ensureChatsRootDirectory } from '@/lib/chatDirectories';
+import { opencodeClient } from '@/lib/opencode/client';
 import { useTraySync } from './useTraySync';
 import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useSessionPinnedStore } from '@/stores/useSessionPinnedStore';
+import { useSessionDisplayStore } from '@/stores/useSessionDisplayStore';
 import { getPinnedSessionKey } from '@/lib/sessionPins';
 import { getRuntimeKey } from '@/lib/runtime-switch';
 import { useSessionUIStore } from '@/sync/session-ui-store';
@@ -28,6 +30,11 @@ const Harness = () => {
   useTraySync();
   return null;
 };
+
+const originalHomeInfo = opencodeClient.getFilesystemHomeInfo;
+opencodeClient.getFilesystemHomeInfo = async () => ({ home: '/home' });
+await ensureChatsRootDirectory();
+opencodeClient.getFilesystemHomeInfo = originalHomeInfo;
 
 describe('Dock badge with the macOS menu bar disabled', () => {
   let dom: Window;
@@ -67,7 +74,8 @@ describe('Dock badge with the macOS menu bar disabled', () => {
     });
     useProjectsStore.setState({ projects: [{ id: 'project', path: '/project' }] });
     useGlobalSessionsStore.setState({ activeSessions: [session('root'), session('child', 'root')] });
-    useUIStore.setState({ dockBadgeEnabled: true, notifyOnSubtasks: false });
+    useUIStore.setState({ dockBadgeEnabled: true, notifyOnSubtasks: false, sessionWorkEnabled: true });
+    useSessionDisplayStore.setState({ showChatsSection: true, showPinnedSection: true, showWorkSection: true });
     counts.length = 0;
     listenerCount = 0;
     intervalCount = 0;
@@ -96,6 +104,48 @@ describe('Dock badge with the macOS menu bar disabled', () => {
     useProjectsStore.setState({ projects: [] });
     await flush();
     expect(counts).toEqual([1, 0]);
+  });
+
+  test('counts a chat while the Chats section is shown', async () => {
+    useProjectsStore.setState({ projects: [{ id: 'moved-chat', path: '/tmp/chats' }] });
+    // Pinned and in work, it still has no row elsewhere: those zones leave chats out.
+    useGlobalSessionsStore.setState({
+      activeSessions: [{
+        ...session('chat', undefined, '/tmp/chats', CHAT_DRAFT_PROJECT_ID),
+        metadata: { openchamber: { pinned: { at: 1 }, work: { state: 'open' } } },
+      }],
+    });
+    useSessionDisplayStore.setState({ showChatsSection: false });
+    finishTurn('chat');
+    await act(async () => root.render(<Harness />));
+    expect(counts).toEqual([0]);
+    useSessionDisplayStore.setState({ showChatsSection: true });
+    await flush();
+    expect(counts).toEqual([0, 1]);
+  });
+
+  test('never counts an unregistered destination through the Pinned or In work zones', async () => {
+    useGlobalSessionsStore.setState({
+      activeSessions: [
+        { ...session('in-work', undefined, '/tmp/eval-run'), metadata: { openchamber: { work: { state: 'open' } } } },
+        { ...session('pinned', undefined, '/tmp/eval-run'), metadata: { openchamber: { pinned: { at: 1 } } } },
+      ],
+    });
+    useSessionDisplayStore.setState({ showPinnedSection: false, showWorkSection: false });
+    finishTurn('in-work');
+    finishTurn('pinned');
+    await act(async () => root.render(<Harness />));
+    expect(counts).toEqual([0]);
+    useSessionDisplayStore.setState({ showPinnedSection: true });
+    await flush();
+    expect(counts).toEqual([0]);
+    useSessionDisplayStore.setState({ showWorkSection: true });
+    await flush();
+    expect(counts).toEqual([0]);
+    // Turning the work feature off hides the In work zone too.
+    useUIStore.setState({ sessionWorkEnabled: false });
+    await flush();
+    expect(counts).toEqual([0]);
   });
 
   test('publishes unread chats, clears viewed chats, and respects the badge toggle without tray timers or listeners', async () => {
@@ -181,6 +231,7 @@ describe('Dock badge with the macOS menu bar disabled', () => {
 // index feeds the tray from two inputs — live events and the host seed — and the
 // seed is the one that arrives already parsed.
 describe('tray approvals carry whether a permission can be remembered', () => {
+  const previousProjects = useProjectsStore.getState().projects;
   let dom: Window;
   let root: Root;
   const snapshots: Array<{ approvals?: Array<{ id: string; canSave: boolean }> }> = [];
@@ -208,6 +259,7 @@ describe('tray approvals carry whether a permission can be remembered', () => {
       IS_REACT_ACT_ENVIRONMENT: true,
     });
     resetGlobalBlockingRequests();
+    useProjectsStore.setState({ projects: [{ id: 'repo', path: '/repo' }, { id: 'unopened', path: '/unopened' }] });
     useGlobalSessionsStore.setState({ activeSessions: [session('root')] });
     useUIStore.setState({ dockBadgeEnabled: true, notifyOnSubtasks: false });
     snapshots.length = 0;
@@ -217,6 +269,7 @@ describe('tray approvals carry whether a permission can be remembered', () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     resetGlobalBlockingRequests();
+    useProjectsStore.setState({ projects: previousProjects });
     await dom.happyDOM.close();
   });
 
@@ -309,6 +362,7 @@ describe('Tray sessions follow the configured projects', () => {
       ],
     });
     useUIStore.setState({ dockBadgeEnabled: true, notifyOnSubtasks: false });
+    useSessionDisplayStore.setState({ showChatsSection: true, showPinnedSection: true, showWorkSection: true });
     snapshots.length = 0;
     root = createRoot(document.createElement('div'));
   });
@@ -335,12 +389,16 @@ describe('Tray sessions follow the configured projects', () => {
   test('keeps a managed chat and an isolated space session', async () => {
     useGlobalSessionsStore.setState({
       activeSessions: [
-        session('chat', undefined, '/tmp/chats', CHAT_DRAFT_PROJECT_ID),
+        session('chat', undefined, '/home/.config/openchamber/chats/2026-10-26/session-1', CHAT_DRAFT_PROJECT_ID),
         session('space', undefined, '/spaces/a1b2c3d4e5f6/app'),
         session('elsewhere', undefined, '/tmp/eval-run'),
       ],
     });
     await act(async () => root.render(<Harness />));
+    await flush();
+    expect(lastSnapshot()?.sessions?.map((entry) => entry.id).sort()).toEqual(['chat', 'space']);
+    // With the Chats section hidden the tray still lists the chat.
+    useSessionDisplayStore.setState({ showChatsSection: false });
     await flush();
     expect(lastSnapshot()?.sessions?.map((entry) => entry.id).sort()).toEqual(['chat', 'space']);
   });
@@ -365,7 +423,7 @@ describe('Tray sessions follow the configured projects', () => {
     expect(lastSnapshot()?.sessions?.map((entry) => entry.id)).toEqual(['in-worktree']);
   });
 
-  test('keeps an in-work or pinned session whose project is gone, as the sidebar zones do', async () => {
+  test('hides in-work and pinned sessions until their destination is registered', async () => {
     useGlobalSessionsStore.setState({
       activeSessions: [
         { ...session('in-work', undefined, '/tmp/removed'), metadata: { openchamber: { work: { state: 'open' } } } },
@@ -377,7 +435,11 @@ describe('Tray sessions follow the configured projects', () => {
     useSessionPinnedStore.setState({ ids: new Set(pinKey ? [pinKey] : []) });
     await act(async () => root.render(<Harness />));
     await flush();
-    expect(lastSnapshot()?.sessions?.map((entry) => entry.id).sort()).toEqual(['in-work', 'pinned']);
+    expect(lastSnapshot()?.sessions?.map((entry) => entry.id)).toEqual([]);
+    // Hidden sections cannot admit an unregistered destination either.
+    useSessionDisplayStore.setState({ showPinnedSection: false, showWorkSection: false });
+    await flush();
+    expect(lastSnapshot()?.sessions?.map((entry) => entry.id)).toEqual([]);
     useSessionPinnedStore.setState({ ids: new Set() });
   });
 
@@ -393,12 +455,12 @@ describe('Tray sessions follow the configured projects', () => {
     expect(lastSnapshot()?.sessions?.map((entry) => entry.id)).toEqual(['in-project']);
   });
 
-  test('still lists a pending approval from a session it hides', async () => {
+  test('hides a pending approval from an unregistered session destination', async () => {
     await act(async () => root.render(<Harness />));
     applyGlobalBlockingRequestEvents('/tmp/eval-run', [
       { type: 'permission.asked', properties: { id: 'orphan-ask', sessionID: 'elsewhere', action: 'bash', resources: ['rm -rf tmp'] } },
     ]);
     await flush();
-    expect(lastSnapshot()?.approvals?.map((entry) => entry.id)).toEqual(['orphan-ask']);
+    expect(lastSnapshot()?.approvals?.map((entry) => entry.id)).toEqual([]);
   });
 });

@@ -114,6 +114,58 @@ it no longer hides the file's git state. Change the look there, not per tree.
 The JSON tree viewer (`components/ui/JsonTreeViewer.tsx`) takes the same
 indent and guides and copies the chevron's look; keep the copy in step.
 
+A name never truncates. The tree is as wide as its widest row and scrolls
+sideways, and every row is that wide, so fills and marks span the scroll.
+The git marks sit in an end lane (`FileTreeRowEnd`, `oc-file-tree-row-end`
+in `index.css`) that sticks to the pane's end, fades the name out over 1rem
+and redraws the row's rounded end in the row's colour, drop ring included.
+Over the last 1rem of the sideways scroll the fade narrows away, so the
+widest name shows whole at the end without a gap kept after every name. The hover menu is a
+second lane of the same kind that takes no width and fades in over the end,
+so a row reserves no room for it. Error rows stay as wide as the pane
+(`100cqw` of the scroller) and held at its start. The non-virtual trees get
+their width from CSS (`w-max`). The sidebar's virtual list cannot, because
+only some rows are mounted: it remembers, by path, each row seen wider than
+the list, takes the widest as its width, and forgets rows that leave the
+tree. That keeps the sideways scroll when wide rows scroll out of view or
+another folder opens.
+
+### Why the end lane paints the row's colour under a mask
+
+The fade has to cover the name with exactly the colour of the row behind it,
+which is a translucent hover or selection fill over the pane. Fading the
+fill and the pane colour as separate gradients darkened the middle of the
+fade on a selected row. The lane paints the composed colour solid and a mask
+fades it in as a whole.
+
+## Opening and closing a folder
+
+All three trees open and close folders with the sessions sidebar's motion
+(`lib/motion/rowDisclosure.ts`, 200ms ease-out): a folder's rows are revealed
+above a boundary moving down from the folder row and fade in as it uncovers
+them, and every row below slides with the boundary. `useFileTreeDisclosure`
+wraps each tree's toggle. It works on the rows in the document, which carry
+their path in `data-tree-disclosure-path` (a load error row carries its
+folder's path plus `/`), so one hook serves nested lists, a flat list and the
+virtual list. A folder whose children load after opening animates when they
+arrive. Reduced motion, Collapse all, search and auto-expand do not animate.
+
+### Why closing commits at once and draws copies
+
+The tree's state closes the folder immediately, and inert clones of the closing
+rows that were on screen fold away at their old place while the rows below
+slide up. Holding the state open until the motion ended would leave the virtual
+list without the rows that slide into view, which the virtualizer only mounts
+for the closed layout. While the copies fold, the list keeps its old height, so
+a list scrolled to its end does not jump.
+
+### Why the sidebar tree pins rows while a folder opens
+
+In the virtual tree, the rows on screen below an opening folder move past the
+virtual range at once. `SidebarFilesTree` keeps them mounted
+(`slidingRowPaths`) until the motion settles; without that the list under the
+boundary was empty while it moved.
+
 ## Refreshing after file changes
 
 The sidebar tree and the phone browser re-list folders when the agent changed
@@ -161,14 +213,34 @@ the pointer; a zoomed image larger than the viewer pans by mouse drag;
 `imageZoom.ts` holds the scale math; round arrows fixed to the viewer's
 edges, and the arrow keys while the viewer has focus and the image is at fit,
 show the previous and next image of the same folder, see below),
-`MediaArtifact` (native audio/video
+`PdfArtifact` (a frame where the runtime has a PDF viewer; elsewhere pages
+drawn by pdf.js, see below), `MediaArtifact` (native audio/video
 element, duration and dimensions once metadata loads, a stated failure when
 the runtime cannot decode the codec), `FontArtifact` (a specimen under a
 throwaway `FontFace` family removed when the tab closes), `TableArtifact`
 (CSV/TSV through `delimitedText.ts`, capped rows stated in the meta line),
 and `BinaryArtifact` (name, type, size, download; never a decode attempt).
 `FilesView.renderArtifactPreview` is the single switch both the docked and
-the fullscreen viewer use. SVG, Mermaid (`.mmd`) and delimited files are text
+the fullscreen viewer use.
+
+A file that cannot be shown fills the pane with `ContentState`
+(`components/ui/content-state.tsx`): icon, title, one sentence, actions. A
+failed read names the file, adds the server's reason when there is one, and
+offers Retry (`reloadSelectedFile`, the same reload a content invalidation
+runs); the binary, media and font states use it too. `ContentLoadingState`
+shows the spinner only after 200 ms, so switching between quick files does not
+flash it. `ImageArtifact` keeps the loading state until the image decodes
+(an empty `src` is a fetch still running) and shows its own failure with Retry
+and download for data the browser cannot decode. A failed image fetch marks
+the file failed (`failedFilePath`) like a text read and keeps the loaded path:
+clearing it made the selection effect load the file again, which wiped the
+error without fetching the image.
+
+Opening a file from the sidebar tree, the command palette or a diff runs
+`validateContextFileOpen` first. A file over `MAX_OPEN_FILE_BYTES` or
+`MAX_OPEN_FILE_LINES`, or one that cannot be read, never opens;
+`toastContextFileOpenFailure` names it and adds the limit and its size, or the
+server's reason. SVG, Mermaid (`.mmd`) and delimited files are text
 with an artifact view: each has a per-path preview/source toggle, and opens
 in preview regardless of the text-first setting because an agent-produced
 artifact is opened to be looked at.
@@ -192,6 +264,14 @@ through `getRuntimeUrlResolver().authenticatedAsset('/api/fs/raw', …)` with
 the scoped URL token; the server streams byte ranges so playback can seek.
 Images keep the object-URL/data-URL path.
 
+On Capacitor with active proxy headers, `useRawAssetUrl` reads PDF, audio,
+video and fonts through `runtimeFetch` into an object URL. Reads retain at
+most the existing 10 MiB file-open limit and have a 30-second deadline. A
+file, revision or runtime change aborts the old read and revokes its URL;
+unmount does the same. Failed reads show the existing error without falling
+back to an unauthenticated browser URL. Playback seeks within the downloaded
+file and needs no URL-token renewal. Other runtimes keep streamed byte ranges.
+
 `useRawAssetUrl` makes that URL once per file, revision and runtime and holds
 it, so the shared token rotating never touches an open preview: a PDF stays
 on its page, a player keeps playing, a font stays registered. The server
@@ -204,6 +284,14 @@ renewal per ten seconds; a renewal that returns the same URL, or fails, shows
 "cannot be played". A file changed on disk bumps the revision, which gives the
 preview a new URL and loads the new bytes.
 
+### Why proxy-protected mobile previews buffer the file
+
+Browser media elements cannot attach proxy headers, and a scoped URL token
+only authenticates to OpenChamber. Reading through the shared HTTP transport
+keeps proxy credentials out of URLs and preserves redirect refusal. The
+existing file-open limit bounds retained bytes, at the cost of waiting for
+the file to finish downloading before playback starts.
+
 ### Why the URL is held and not rebuilt with every new token
 
 A rebuilt URL is a new document: the iframe navigates and the media element
@@ -214,6 +302,24 @@ widen what a URL in the page can open. A PDF and a font load their bytes when
 they open, so only media asks for ranges late, and the renewal covers it
 without changing any server check. A PDF still downloading when its token
 expires, a very large file over a slow link, is the case this leaves open.
+
+### Why PDFs keep the frame where they can, and pdf.js only where they cannot
+
+A PDF opens in a frame, and the runtime's own viewer draws it, with its zoom,
+search and print. The Android WebView and Android Chrome have no viewer and
+painted an empty frame (#5823). They report `navigator.pdfViewerEnabled ===
+false`, so there, and only there, `PdfArtifact` draws the pages with pdf.js:
+pages at the pane width and the device pixel ratio, scrolled down, each page
+painted while it is within a screen of view and cleared once it leaves, so a
+long document holds a few canvases. pdf.js everywhere would have replaced
+working viewers with a poorer one. It is the legacy build, which carries
+polyfills that WebViews a few versions behind need, and the module and its
+worker are bundled assets imported on first use, never fetched from a CDN, so
+offline use and the VS Code CSP hold and nothing loads until a PDF opens there.
+It reads the file in one GET, because a Range request needs a CORS header the
+server does not allow to the Android app. There is no pinch zoom, and PDFs that
+need pdf.js's CMap, standard font or wasm data (CJK text without embedded
+fonts, JPEG 2000 images) may lose that text or image.
 
 An HTML file's preview is untrusted content. `useHtmlPreviewUrl` asks the
 server for a grant (`POST /api/fs/preview`) and loads the page from
@@ -277,6 +383,9 @@ preview changes or unmounts. Relative links open through the supplied
 files view. Fragment links find a heading within the Markdown root. A source's
 `prefers-color-scheme` condition follows the app theme through its rendered
 `media` prop. Content, file and runtime changes retire older asset results.
+A document image keeps its box hidden until its object URL arrives, and one
+that cannot be read or decoded is replaced by its name after a warning icon,
+with "Image couldn't load" as the tooltip.
 
 A document image is read once it comes within one height of the preview's
 scroller of its visible part (`useNearMedia` with the nearest ancestor that
@@ -293,6 +402,37 @@ were on screen (#5320). The observer's root is the preview's scroller, because
 a margin on the viewport is clipped by that scroller and an image would start
 loading only once already visible. Read files stay until the preview closes:
 releasing one far away would collapse its height and move the text being read.
+
+The Markdown preview renders the file a block at a time (`windowed` on
+`SimpleMarkdownRenderer`, `chat/markdown/markdownWindow.ts`): Streamdown
+splits it into top-level blocks as it splits a streamed reply, and only the
+blocks within a viewport of the visible part mount; the rest stand as empty
+boxes of the height and edge margins they had when they left, or an estimate
+from their source until first drawn. A file with footnotes or link
+definitions is one block and renders whole. What reads the whole rendered
+document mounts every block while it does: the find bar while it is open, a
+heading link while it looks for its heading, and a selection that crosses a
+block not mounted (select-all, a shift-click far away) until it collapses. A
+selection keeps the blocks it reached mounted, so its ends stay in the DOM
+while it autoscrolls, and a block whose disclosure the reader toggled, or
+that plays a video, stays mounted. The remembered scroll place of a Markdown
+preview is the block at the viewport's top and the offset into it
+(`useFilePreviewScrollPosition`); that block stays mounted while it is
+restored, held until two frames in a row find it in place, since the blocks
+around it draw only after the jump.
+
+### Why a Markdown preview is virtualized
+
+Rendered whole, a 340 KB changelog (1,000 blocks, 220,000 px) cost 470 ms to
+open, mostly the Markdown parse, and while the panel was resized it laid out
+the whole document on every frame: 80 % of the main thread, and with an
+accessibility client on 1.1 s of serialization and 96 dropped frames per
+gesture. Skipping the layout of blocks off screen in CSS (`content-visibility`)
+left the parse and the accessibility nodes, and changed spacing wherever a
+block's children's margins collapse through it. Mounted a window at a time,
+the changelog opens without a task over 10 ms, and a resize costs what it
+costs with a short file. The blocks render as they do in a streamed reply,
+pixel for pixel the same as the whole document.
 
 ### Why document assets resolve before node updates
 

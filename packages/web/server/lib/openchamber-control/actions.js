@@ -8,11 +8,11 @@
  * visible in a shared schema.
  */
 export const OPENCHAMBER_CONTROL_ACTION_DEFINITIONS = Object.freeze([
-  { action: 'projects.list', title: 'List configured projects', description: 'No parameters' },
+  { action: 'projects.list', title: 'List session destinations', description: 'Projects and Chats; use an id as projectId for session.create. No parameters' },
   { action: 'models.list', title: 'Show model preferences', description: 'Default, favorite and recent models; no parameters' },
   { action: 'models.search', title: 'Search models', description: 'The model catalog, favorites and recent models first; optional query, provider, all, limit, offset' },
   { action: 'session.list', title: 'List sessions', description: 'Optional limit, all, withStatus' },
-  { action: 'session.create', title: 'Create a session', description: 'In this directory by default; prompt optional' },
+  { action: 'session.create', title: 'Create a session', description: 'In this directory by default; projectId from projects.list selects a project or openchamber:chats for a new Chat. Use the returned directory for later session actions. Prompt optional' },
   { action: 'session.send', title: 'Send a prompt', description: 'New prompt to sessionId' },
   { action: 'session.fork', title: 'Fork a session', description: 'Fork sessionId at messageId; prompt optional' },
   { action: 'session.status', title: 'Check session status', description: 'Status of sessionId' },
@@ -21,7 +21,7 @@ export const OPENCHAMBER_CONTROL_ACTION_DEFINITIONS = Object.freeze([
   { action: 'session.link', title: 'Link a change or issue to a session', description: 'Add link to sessionId (default: this session); the same link again updates its title. Only the user removes links' },
   { action: 'pr.watch', title: 'Wait on a pull request', description: 'Requires url of a GitHub pull request or GitLab merge request. A message arrives in this session when a check fails or every check passes, someone comments or reviews, the branch conflicts or falls behind, or it is merged or closed. One wake ends the watch: watch again to keep waiting. Never wait with a sleep loop' },
   { action: 'pr.unwatch', title: 'Stop waiting on a pull request', description: 'This session stops waiting; no parameters' },
-  { action: 'work.name', title: 'Name the task', description: 'Name the task sessionId (default: this session) works on, in title: at most 4 words saying what the task is; rename only when it becomes a different task. Names its worktree, or in the main checkout the session it grew from. Answers the current name; a name the user gave stays. Only while the branch of a worktree is a placeholder OpenChamber generated (its checkout context says so), it also requires branch, the branch named after the task, and renames it; any other branch stays' },
+  { action: 'work.name', title: 'Name the task', description: 'Name the task sessionId (default: this session) works on, in title: at most 4 words saying what the task is, in the language of the user\'s latest message; rename only when it becomes a different task. Names its worktree, or in the main checkout the session it grew from. Answers the current name; a name the user gave stays. Only while the branch of a worktree is a placeholder OpenChamber generated (its checkout context says so), it also requires branch, the branch named after the task, and renames it; any other branch stays' },
   { action: 'schedule.status', title: 'Check scheduler status', description: 'No parameters', agentExposed: false },
   { action: 'schedule.list', title: 'List scheduled tasks', description: 'Tasks and scheduler status' },
   { action: 'schedule.create', title: 'Create a scheduled task', description: 'Requires name, prompt, one schedule selector, and model unless targetSessionId is set, which keeps that session\'s model' },
@@ -94,7 +94,7 @@ export const OPENCHAMBER_WEB_ACTIONS = Object.freeze(
  */
 export const OPENCHAMBER_MEMORY_ACTION_DEFINITIONS = Object.freeze([
   { action: 'memory.read', title: 'Read a stored memory', description: 'Full text of one memory; requires title or memoryId' },
-  { action: 'memory.list', title: 'List stored memories', description: 'Titles, when the session index is missing or stale' },
+  { action: 'memory.list', title: 'List stored memories', description: 'Titles, when the session index is missing, stale or cut short' },
   { action: 'memory.save', title: 'Remember something', description: 'Requires title, body, scope. Saving the same thing updates it; memoryId rewrites that entry, to correct one or merge several into it' },
   { action: 'memory.delete', title: 'Forget a memory', description: 'For a memory that turned out wrong or obsolete; requires memoryId and scope' },
 ]);
@@ -161,9 +161,22 @@ export const OPENCHAMBER_IMAGE_ACTIONS = Object.freeze(
 );
 
 /**
+ * Asking for a secret is its own tool: it is the one action that takes a
+ * credential from the user, so it can be switched off alone. The value goes
+ * to a private file and only its path reaches the agent.
+ */
+export const OPENCHAMBER_SECRET_ACTION_DEFINITIONS = Object.freeze([
+  { action: 'secret.request', title: 'Ask for a secret', description: 'Requires label and reason' },
+]);
+
+export const OPENCHAMBER_SECRET_ACTIONS = Object.freeze(
+  OPENCHAMBER_SECRET_ACTION_DEFINITIONS.map(({ action }) => action),
+);
+
+/**
  * Workflows are their own tool: fanning a large task out to many agents is a
- * distinct intent with its own scripting guidance, and it ships dark behind
- * OPENCHAMBER_WORKFLOWS_ENABLE, so it has to disappear completely.
+ * distinct intent with its own scripting guidance, and the tool is off until
+ * the user turns it on, so it has to disappear completely.
  */
 export const OPENCHAMBER_WORKFLOW_ACTION_DEFINITIONS = Object.freeze([
   { action: 'workflow.check', title: 'Check a workflow', description: 'Compile script, or a saved workflow by name, without running it: its name, description and phases' },
@@ -216,6 +229,7 @@ const ACTIONS_BY_TOOL = Object.freeze({
   openchamber_notify: OPENCHAMBER_NOTIFY_ACTIONS,
   openchamber_render: OPENCHAMBER_RENDER_ACTIONS,
   openchamber_image: OPENCHAMBER_IMAGE_ACTIONS,
+  openchamber_secret: OPENCHAMBER_SECRET_ACTIONS,
   openchamber_workflow: OPENCHAMBER_WORKFLOW_ACTIONS,
   [WORKFLOW_ANSWER_TOOL]: OPENCHAMBER_WORKFLOW_ANSWER_ACTIONS,
 });
@@ -268,6 +282,7 @@ export const OPENCHAMBER_ALL_ACTIONS = Object.freeze([
   ...OPENCHAMBER_NOTIFY_ACTIONS,
   ...OPENCHAMBER_RENDER_ACTIONS,
   ...OPENCHAMBER_IMAGE_ACTIONS,
+  ...OPENCHAMBER_SECRET_ACTIONS,
   ...OPENCHAMBER_WORKFLOW_ACTIONS,
   ...OPENCHAMBER_WORKFLOW_ANSWER_ACTIONS,
 ]);

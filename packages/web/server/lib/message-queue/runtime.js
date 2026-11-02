@@ -107,6 +107,8 @@ const parseAttachment = (value) => {
   };
   const serverPath = asNonEmptyString(raw.serverPath);
   if (serverPath) attachment.serverPath = serverPath;
+  const agentPath = asNonEmptyString(raw.agentPath);
+  if (agentPath) attachment.agentPath = agentPath;
   attachment.dataUrl = dataUrl;
   return attachment;
 };
@@ -511,7 +513,7 @@ export function createMessageQueueRuntime({
   // v2 takes prompt attachments as URIs; a data URL is one.
   const toPromptFile = (attachment) => ({
     uri: attachment.dataUrl,
-    ...(attachment.filename ? { name: attachment.filename } : {}),
+    ...(attachment.agentPath || attachment.filename ? { name: attachment.agentPath || attachment.filename } : {}),
   });
 
   /**
@@ -571,6 +573,9 @@ export function createMessageQueueRuntime({
 
     // Standing project context is written into the session first, exactly as
     // a UI send does it; a failed write sends without it rather than not at all.
+    // The response style is left out: a queued message is the user's own, and
+    // this server delivery has no style text of its own, so the entry the
+    // session already holds stays as it is.
     if (sessionKnowledgeRuntime) await sessionKnowledgeRuntime.sync(sessionId, directory);
 
     // A message queued as a goal starts it now, as a direct send would. The

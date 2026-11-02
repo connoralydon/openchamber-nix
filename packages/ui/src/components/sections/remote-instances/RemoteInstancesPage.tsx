@@ -78,6 +78,7 @@ import { runtimeKeyForDesktopHost } from '@/lib/desktopCurrentHost';
 import { useDurationTickerNow, useWaitingBlink } from '@/hooks/useDurationTicker';
 import { Spinner } from '@/components/ui/spinner';
 import { useSshConfirmation } from './useSshConfirmation';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 
 const randomPort = (): number => {
   return Math.floor(20000 + Math.random() * 30000);
@@ -236,7 +237,7 @@ const StatusDot: React.FC<{ className: string; waiting?: boolean }> = ({ classNa
 };
 
 // Added through a relay pairing link: reachable only over the relay, no address.
-const isRelayOnlyHost = (host: DesktopHost): boolean => Boolean(host.relay) && !host.apiUrl;
+const isRelayOnlyHost = (host: DesktopHost): boolean => Boolean(host.relay) && !normalizeHostUrl(host.url);
 
 const buildForwardLabel = (forward: DesktopSshPortForward): string => {
   if (forward.type === 'dynamic') {
@@ -801,7 +802,7 @@ export const RemoteInstancesPage: React.FC = () => {
 
   const saveDirectHostEdit = React.useCallback(async () => {
     if (!directEditingId) return;
-    // Relay-only hosts have no address, token or headers to edit; only the name.
+    // Keep relay pairing credentials and learned addresses intact on rename.
     if (directEditingHost && directEditingRelayOnly) {
       const label = directEditLabel.trim() || directEditingHost.label;
       const nextHosts = directHosts.map((host) => host.id === directEditingId ? { ...host, label } : host);
@@ -880,9 +881,13 @@ export const RemoteInstancesPage: React.FC = () => {
       if (!url) {
         return [host.id, host.relay ? await relayProbe() : ({ status: 'unreachable', latencyMs: 0 } as HostProbeResult)] as const;
       }
-      const direct = await desktopHostProbe(url, { clientToken: host.clientToken || null, requestHeaders: host.requestHeaders || null })
+      const direct = await desktopHostProbe(url, {
+        clientToken: host.clientToken || null,
+        requestHeaders: host.requestHeaders || null,
+        expectedServerId: host.relay?.serverId ?? null,
+      })
         .catch((): HostProbeResult => ({ status: 'unreachable', latencyMs: 0 }));
-      if (direct.status === 'unreachable' && host.relay) {
+      if ((direct.status === 'unreachable' || direct.status === 'wrong-service' || direct.status === 'incompatible') && host.relay) {
         const relayResult = await relayProbe();
         if (relayResult.status === 'ok' || relayResult.status === 'relay-limit') return [host.id, relayResult] as const;
       }
@@ -2086,7 +2091,7 @@ export const RemoteInstancesPage: React.FC = () => {
                 ) : filteredImportCandidates.length === 0 ? (
                   <p className="typography-meta text-muted-foreground">{t('settings.remoteInstances.page.addDialog.searchEmpty')}</p>
                 ) : (
-                  <div className="max-h-[45vh] overflow-auto">
+                  <ScrollableOverlay outerClassName="max-h-[45vh]">
                     {filteredImportCandidates.map((candidate) => (
                       <div key={`${candidate.source}:${candidate.host}`} className="flex items-center justify-between gap-3 border-b border-[var(--surface-subtle)] py-2.5 last:border-b-0">
                         <div className="min-w-0">
@@ -2107,7 +2112,7 @@ export const RemoteInstancesPage: React.FC = () => {
                         </Button>
                       </div>
                     ))}
-                  </div>
+                  </ScrollableOverlay>
                 )}
               </div>
             ) : (
@@ -2336,7 +2341,11 @@ export const RemoteInstancesPage: React.FC = () => {
               }
             >
               <SelectTrigger className="w-fit min-w-[140px]">
-                <SelectValue placeholder={t('settings.remoteInstances.page.field.modePlaceholder')} />
+                <SelectValue>
+                  {draft.remoteOpenchamber.mode === 'external'
+                    ? t('settings.remoteInstances.page.field.modeExternal')
+                    : t('settings.remoteInstances.page.field.modeManaged')}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="managed">{t('settings.remoteInstances.page.field.modeManaged')}</SelectItem>
@@ -2434,7 +2443,11 @@ export const RemoteInstancesPage: React.FC = () => {
                 }
               >
                 <SelectTrigger className="w-fit min-w-[140px]">
-                  <SelectValue placeholder={t('settings.remoteInstances.page.field.selectInstallMethodPlaceholder')} />
+                  <SelectValue>
+                    {draft.remoteOpenchamber.installMethod === 'auto'
+                      ? t('settings.remoteInstances.page.field.installMethodAuto')
+                      : draft.remoteOpenchamber.installMethod}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="auto">{t('settings.remoteInstances.page.field.installMethodAuto')}</SelectItem>
@@ -2533,7 +2546,13 @@ export const RemoteInstancesPage: React.FC = () => {
               }}
             >
               <SelectTrigger className="w-fit min-w-[240px]">
-                <SelectValue placeholder={t('settings.remoteInstances.page.field.selectBindHostPlaceholder')} />
+                <SelectValue>
+                  {draft.localForward.bindHost === 'localhost'
+                    ? t('settings.remoteInstances.page.field.bindHostOption.localhost')
+                    : draft.localForward.bindHost === '0.0.0.0'
+                      ? t('settings.remoteInstances.page.field.bindHostOption.lan')
+                      : t('settings.remoteInstances.page.field.bindHostOption.loopback')}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="127.0.0.1">{t('settings.remoteInstances.page.field.bindHostOption.loopback')}</SelectItem>
@@ -2782,7 +2801,13 @@ export const RemoteInstancesPage: React.FC = () => {
                         }
                       >
                         <SelectTrigger className="w-fit min-w-[140px]">
-                          <SelectValue placeholder={t('settings.remoteInstances.page.field.typePlaceholder')} />
+                          <SelectValue>
+                            {forward.type === 'remote'
+                              ? t('settings.remoteInstances.page.forwardType.remote')
+                              : forward.type === 'dynamic'
+                                ? t('settings.remoteInstances.page.forwardType.dynamic')
+                                : t('settings.remoteInstances.page.forwardType.local')}
+                          </SelectValue>
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="local">{t('settings.remoteInstances.page.forwardType.local')}</SelectItem>
@@ -3023,9 +3048,9 @@ export const RemoteInstancesPage: React.FC = () => {
           ) : logDialogError ? (
             <div className="typography-meta text-[var(--status-error)]">{logDialogError}</div>
           ) : (
-            <pre className="max-h-[55vh] overflow-auto oc-tile-inset rounded-md p-3 typography-micro text-foreground whitespace-pre-wrap break-words">
+            <ScrollableOverlay as="pre" outerClassName="max-h-[55vh] oc-tile-inset rounded-md" className="p-3 typography-micro text-foreground whitespace-pre-wrap break-words" disableHorizontal>
               {logDialogLines.length > 0 ? logDialogLines.join('\n') : t('settings.remoteInstances.page.logsDialog.empty')}
-            </pre>
+            </ScrollableOverlay>
           )}
         </DialogContent>
       </Dialog>

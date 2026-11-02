@@ -9,6 +9,7 @@ import { useDurationTickerNow } from '@/hooks/useDurationTicker';
 import { useI18n } from '@/lib/i18n';
 import { opencodeClient } from '@/lib/opencode/client';
 import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import {
   sessionsInTree,
   backgroundShellsOfSessions,
@@ -121,9 +122,9 @@ const ShellRow: React.FC<{
         {/* The row shows one truncated line; the tooltip keeps the command's
             own line breaks and indentation and wraps only overlong lines. */}
         <TooltipContent side="top" sideOffset={6} className="max-w-[min(36rem,90vw)] [text-wrap:wrap]">
-          <pre className="max-h-[50vh] overflow-y-auto whitespace-pre-wrap break-words font-mono typography-code">
+          <ScrollableOverlay as="pre" outerClassName="max-h-[50vh]" className="whitespace-pre-wrap break-words font-mono typography-code" disableHorizontal>
             {shell.command}
-          </pre>
+          </ScrollableOverlay>
         </TooltipContent>
       </Tooltip>
       {fromSubagent ? (
@@ -174,7 +175,7 @@ export const BackgroundShellsStrip: React.FC<BackgroundShellsStripProps> = React
 
   if (shells.length === 1) {
     return (
-      <div role="group" className="border-b border-border/60" aria-label={t('chat.backgroundShells.aria')}>
+      <div role="group" className="border-b border-edge" aria-label={t('chat.backgroundShells.aria')}>
         {row(shells[0])}
       </div>
     );
@@ -183,7 +184,7 @@ export const BackgroundShellsStrip: React.FC<BackgroundShellsStripProps> = React
   // The header toggles the list, as the queue header does, and stops every
   // command in it at once.
   return (
-    <div role="group" className="border-b border-border/60" aria-label={t('chat.backgroundShells.aria')}>
+    <div role="group" className="border-b border-edge" aria-label={t('chat.backgroundShells.aria')}>
       <div className="flex oc-composer-row items-center gap-2 ps-3 pe-1.5">
         <Button
           type="button"

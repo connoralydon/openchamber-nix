@@ -468,9 +468,13 @@ describe('a message queued as a goal', () => {
     runtime.start();
     await runtime.enqueue(SESSION, DIRECTORY, item({ content: 'Implement this plan: X', text: 'Implement this plan: X', goal: { objective: 'the whole plan', tokenBudget: null } }));
     emit({ type: 'session.status', properties: { sessionID: SESSION, status: { type: 'idle' } } });
-    await settle();
-    expect(persisted).toHaveLength(1);
+    await vi.waitFor(() => {
+      expect(runtime.sessionSnapshot(SESSION).items).toEqual([]);
+      expect(persisted).toHaveLength(1);
+    });
     expect(fs.readFileSync(path.join(process.env.OPENCHAMBER_DATA_DIR, 'goals', `${SESSION}.md`), 'utf8')).toBe('the whole plan');
+    runtime.stop();
+    await runtime.flush();
   });
 });
 
@@ -925,6 +929,23 @@ describe('message queue runtime', () => {
     });
   });
 
+  it('hands the model an attachment\'s resolved on-disk path as its name', async () => {
+    const { runtime, openCode, emit } = createRuntime();
+    runtime.start();
+    await runtime.enqueue(SESSION, DIRECTORY, item({
+      attachments: [{
+        id: 'a', filename: 'report.txt', mimeType: 'text/plain', size: 1, source: 'local',
+        dataUrl: 'data:text/plain,hi', agentPath: '/Users/me/Documents/report.txt',
+      }],
+    }));
+    emit({ type: 'session.status', properties: { sessionID: SESSION, status: { type: 'idle' } } });
+    await settle();
+    expect(openCode.state.sent.at(-1).body).toEqual({
+      text: 'follow up',
+      files: [{ uri: 'data:text/plain,hi', name: '/Users/me/Documents/report.txt' }],
+    });
+  });
+
   it('admits captured context as synthetic messages and still runs a queued command through the command route', async () => {
     // The command route takes attachments only, so the context goes ahead as
     // synthetic messages; the command itself keeps its route, because sending
@@ -952,7 +973,9 @@ describe('message queue runtime', () => {
   it('writes the project knowledge into the session before a queued command', async () => {
     const openCode = createOpenCode();
     const knowledge = {
-      sync: async (sessionId, directory) => { openCode.state.sent.push({ path: 'knowledge', body: { sessionId, directory } }); },
+      sync: async (sessionId, directory, responseStyleInstruction) => {
+        openCode.state.sent.push({ path: 'knowledge', body: { sessionId, directory, responseStyleInstruction } });
+      },
     };
     const { runtime, emit } = createRuntime({ openCode, knowledge });
     runtime.start();
@@ -999,7 +1022,10 @@ describe('message queue runtime', () => {
     const openCode = createOpenCode();
     const knowledge = {
       // `sync` reports failure by resolving false; it never throws.
-      sync: async (sessionId, directory) => { openCode.state.sent.push({ path: 'knowledge', body: { sessionId, directory } }); return false; },
+      sync: async (sessionId, directory, responseStyleInstruction) => {
+        openCode.state.sent.push({ path: 'knowledge', body: { sessionId, directory, responseStyleInstruction } });
+        return false;
+      },
     };
     const { runtime, emit } = createRuntime({ openCode, knowledge });
     runtime.start();

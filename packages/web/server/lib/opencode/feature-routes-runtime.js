@@ -10,14 +10,18 @@ import { setWarmingDuration, setWarmingEnabled } from './websearch-config.js';
 import { registerSourceControlRoutes } from '../source-control/routes.js';
 import { registerLinearRoutes } from '../linear/routes.js';
 import { registerTrackerRoutes } from '../trackers/routes.js';
+import { createExtensionTrackers } from '../trackers/extension-trackers.js';
+import { createTrackerAccounts, trackerAccountsPersistPath } from '../trackers/extension-accounts.js';
+import { createTrackerOAuth } from '../trackers/extension-oauth.js';
 import { registerGuestRoutes, settleGuestDeactivationListeners } from '../guests/routes.js';
 import { listInstalledGuests, registerBuiltInGuests } from '../guests/catalog.js';
 import { setHostCallbackRoute } from '../guests/host-callback.js';
+import { registerNotificationChannelRoutes } from '../notifications/channel-routes.js';
 import { createOutboundHandles } from '../source-control/outbound-handles.js';
 import { createExtensionProviders } from '../source-control/extension-providers.js';
-import { SOURCE_CONTROL_OUTBOUND_PATH } from '@openchamber/sdk';
+import { SOURCE_CONTROL_OUTBOUND_PATH, TRACKER_OUTBOUND_PATH } from '@openchamber/sdk';
 import { extensionsPersistPath } from '../guests/persist.js';
-import { registerGitRoutes } from '../git/routes.js';
+import { createWorktreeInstanceDisposer, registerGitRoutes } from '../git/routes.js';
 import { registerDevServerRoutes } from '../dev-servers/routes.js';
 import { registerMagicPromptRoutes } from '../magic-prompts/routes.js';
 import { registerSessionFoldersRoutes } from '../session-folders/routes.js';
@@ -37,6 +41,7 @@ import { registerConfigEntityRoutes } from './config-entity-routes.js';
 import { registerSettingsUtilityRoutes } from './core-routes.js';
 import { registerProjectIconRoutes } from './project-icon-routes.js';
 import { registerScheduledTaskRoutes } from '../scheduled-tasks/routes.js';
+import { fillScheduledWorktreeBridge } from '../scheduled-tasks/worktree-bridge.js';
 import { createTrackedItemsService } from '../tracked-items/service.js';
 import { createProviderReadCache } from '../provider-read-cache/index.js';
 import { createTrackedItemReaders } from '../tracked-items/readers.js';
@@ -85,19 +90,24 @@ import { managedSshCommand } from '../git/network-operations.js';
 import { createNetworkOperations, createTrustedDirectoriesConfig } from '../git/network-operations.js';
 import { createManagedSshCredentialStore } from '../git/ssh-credential-storage.js';
 import { createManagedSshInventory } from '../git/credentials.js';
+import { createSshPassphraseStore } from '../git/ssh-passphrases.js';
+import { openCodeCredentialSource } from './auth.js';
 import { createContributorProvenanceStore } from '../git/contributor-provenance-storage.js';
 import { createGitNetworkOperationStore } from '../git/network-operation-storage.js';
 import { readEffectiveGitTransportRevision } from '../git/transport-config.js';
-import { completeWorktreeCheckoutHydration, configureRepositoryTransport, resolvePrimaryWorktreeRoot, resolveWorktreeTopLevel } from '../git/service.js';
+import { completeWorktreeCheckoutHydration, configureRepositoryTransport, deleteBranch as deleteBranchService, isGitRepository as isGitRepositoryService, removeWorktree as removeWorktreeService, resolvePrimaryWorktreeRoot, resolveWorktreeTopLevel } from '../git/service.js';
 import { createPrivateRepositoryIdentityResolver } from '../source-control/repository-identity.js';
 import { createSourceControlAuditStore } from '../source-control/audit-storage.js';
 
 export const createFeatureRoutesRuntime = (dependencies) => {
   // `trackers` is the tracker registry the server builds once (`index.js`):
   // routes, tracked-item readers, the read cache and guest host access.
+  // `trackerSessionStatus` is its session-comment fan-out, told when an
+  // extension's tracker leaves.
   const {
     clientReloadDelayMs,
     trackers,
+    trackerSessionStatus,
   } = dependencies;
   const gitRuntimeIdentity = Object.freeze({
     id: `server_${crypto.randomUUID()}`,
@@ -219,6 +229,8 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       createFsSearchRuntime,
       openchamberDataDir,
       onGuestDeactivated,
+      onExtensionSessionEventsChanged = () => {},
+      extensionNotificationChannels = null,
       surfaceViewerHeaders,
       openchamberUserConfigRoot,
       managedChatsRoot,
@@ -479,7 +491,9 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       filePath: path.join(openchamberDataDir, 'git-ssh-credentials.json'),
       fsImpl: fsPromises,
     });
+    const sshPassphrases = createSshPassphraseStore(openCodeCredentialSource({ buildOpenCodeUrl, getOpenCodeAuthHeaders }));
     const managedSshInventory = createManagedSshInventory({
+      passphrases: sshPassphrases,
       store: sshCredentialStore,
       snapshotRoot: path.join(openchamberDataDir, 'git-ssh-operation-keys'),
       discoveryRoot: path.join(os.homedir(), '.ssh'),
@@ -512,7 +526,8 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     let trackedItemsService = null;
     const providerReadCache = createProviderReadCache({
       sourceControlProviderIds: sourceControlProviders.list().map((descriptor) => descriptor.id),
-      trackerIds: trackers.list(),
+      // Extension trackers attach and detach while the server runs.
+      trackerIds: () => trackers.list(),
       onChange: (provider) => trackedItemsService?.refreshProvider(provider),
       onItemRefresh: (provider, item) => trackedItemsService?.refreshItem(provider, item),
     });
@@ -616,6 +631,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       fsImpl: fsPromises,
     });
     const gitCredentialResolver = createGitCredentialResolver({
+      passphrases: sshPassphrases,
       readTransportCredential: sourceControlProviders.readTransportCredential,
       describeProvider: sourceControlProviders.describe,
       lookupManagedSshKey: sshCredentialStore.lookup,
@@ -686,6 +702,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       operationStore: networkOperationStore,
       onCheckoutHydrated: (directory) => completeWorktreeCheckoutHydration(directory, {
         bootstrapStore: worktreeBootstrapStore,
+        disposeInstance: createWorktreeInstanceDisposer({ buildOpenCodeUrl, getOpenCodeAuthHeaders }),
       }),
       spawnImpl: spawn,
       fsImpl: fsPromises,
@@ -696,6 +713,17 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       trustedDirectoriesConfig: createTrustedDirectoriesConfig({ gitBinary }),
     });
     await registerBuiltInGuests({ persistPath: extensionsPersistPath(openchamberDataDir), root: routeDependencies.builtInExtensionsDir });
+    // A change every client reads again from the server; the event carries nothing.
+    const announceChange = (type) => {
+      const clients = getOpenChamberEventClients();
+      for (const client of clients) {
+        try {
+          writeSseEvent(client, { type, properties: {} });
+        } catch {
+          clients.delete(client);
+        }
+      }
+    };
     // Extensions that act as a Git host, kept in step with the catalog; every
     // client re-reads the provider list when the set changes.
     const extensionSourceControlProviders = createExtensionProviders({
@@ -703,16 +731,28 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       register: walkthroughBindingService.registerExtensionProvider,
       unregister: walkthroughBindingService.unregisterExtensionProvider,
       dropSection: (id) => sourceControlAuthStore.dropSection(id),
-      emitChanged: () => {
-        const clients = getOpenChamberEventClients();
-        for (const client of clients) {
-          try {
-            writeSseEvent(client, { type: 'openchamber:source-control-providers-changed', properties: {} });
-          } catch {
-            clients.delete(client);
-          }
-        }
-      },
+      emitChanged: () => announceChange('openchamber:source-control-providers-changed'),
+    });
+    // Extensions that act as a tracker, attached to the registry beside Linear
+    // and kept in step with the catalog; their accounts live in their own
+    // store, and their services reach the tracker's server only through these
+    // handles on the callback listener.
+    const trackerOutboundHandles = createOutboundHandles();
+    setHostCallbackRoute(TRACKER_OUTBOUND_PATH, {
+      refusal: trackerOutboundHandles.refusal,
+      serve: trackerOutboundHandles.serve,
+    });
+    const extensionTrackers = createExtensionTrackers({
+      listGuests: () => listInstalledGuests({ persistPath: extensionsPersistPath(openchamberDataDir) }),
+      currentGuest: async (guestId) => (await listInstalledGuests({ persistPath: extensionsPersistPath(openchamberDataDir) }))
+        .find((guest) => guest.id === guestId) ?? null,
+      registry: trackers,
+      accounts: createTrackerAccounts({ persistPath: trackerAccountsPersistPath(openchamberDataDir) }),
+      handles: trackerOutboundHandles,
+      oauth: createTrackerOAuth(),
+      sessionStatus: trackerSessionStatus ?? { forget: () => {} },
+      persistPath: extensionsPersistPath(openchamberDataDir),
+      emitChanged: () => announceChange('openchamber:tracker-providers-changed'),
     });
     registerGuestRoutes(app, {
       openchamberDataDir, openchamberVersion, resolveGitBinaryForSpawn, resolveOptionalProjectDirectory, getSmallModelService,
@@ -721,14 +761,38 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       onGuestDeactivated: settleGuestDeactivationListeners([
         { name: 'hand back an extension role', listener: onGuestDeactivated },
         { name: 'withdraw an extension Git host', listener: (event) => extensionSourceControlProviders.deactivated(event) },
+        { name: 'drop an extension\'s session event subscription', listener: () => onExtensionSessionEventsChanged() },
+        { name: 'withdraw an extension notification channel', listener: (event) => extensionNotificationChannels?.deactivated(event) },
+        { name: 'withdraw an extension tracker', listener: (event) => extensionTrackers.deactivated(event) },
       ]),
-      onGuestActivated: () => extensionSourceControlProviders.reconcile(),
+      // One failing reconcile never skips another; each failure is logged by the route.
+      onGuestActivated: async () => {
+        const results = await Promise.allSettled([
+          extensionSourceControlProviders.reconcile(),
+          onExtensionSessionEventsChanged(),
+          extensionNotificationChannels?.reconcile(),
+          extensionTrackers.reconcile(),
+        ]);
+        const failed = results.find((result) => result.status === 'rejected');
+        if (failed) throw failed.reason;
+      },
+      onGuestsChanged: () => announceChange('openchamber:guests-changed'),
+      watchFolderInstalls: true,
       surfaceViewerHeaders, trackers,
     });
     // The providers extensions served before the restart, before any request reads the list.
     await extensionSourceControlProviders.reconcile().catch((error) => {
       console.warn('Failed to load extension Git hosts:', error?.message ?? error);
     });
+    await extensionTrackers.reconcile().catch((error) => {
+      console.warn('Failed to load extension trackers:', error?.message ?? error);
+    });
+    if (extensionNotificationChannels) {
+      registerNotificationChannelRoutes(app, { channels: extensionNotificationChannels });
+      await extensionNotificationChannels.reconcile().catch((error) => {
+        console.warn('Failed to load extension notification channels:', error?.message ?? error);
+      });
+    }
     gitWorktreeCreation = registerGitRoutes(app, {
       // Identities for accounts connected before identities carried one are
       // made the first time identities are listed: a moment someone asked for,
@@ -765,6 +829,17 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     // Linear OAuth callback stay for older clients and the SDK contract.
     registerTrackerRoutes(app, { registry: trackers });
     registerLinearRoutes(app);
+    // Register scheduled isolation with the dialog's worktree pipeline.
+    fillScheduledWorktreeBridge(routeDependencies.scheduledWorktreeBridge, {
+      createWorktree: gitWorktreeCreation?.createWorktree,
+      createWorktreeInstanceDisposer: gitWorktreeCreation?.createWorktreeInstanceDisposer,
+      removeWorktree: removeWorktreeService,
+      deleteBranch: deleteBranchService,
+      isGitRepository: isGitRepositoryService,
+      buildOpenCodeUrl,
+      getOpenCodeAuthHeaders,
+      bootstrapStore: worktreeBootstrapStore,
+    });
     registerDevServerRoutes(app, { scanner: devServerScanner, getOwnPorts });
     magicPrompts = registerMagicPromptRoutes(app, {
       fsPromises,

@@ -601,8 +601,9 @@ export type GitManagedSshCandidate =
       capability: { status: 'unavailable'; reason: 'unreadable' | 'encrypted-or-unverifiable' | 'insecure-permissions' };
     };
 
-export type GitManagedSshIntent = { operation: 'inventory' | 'discover' }
-  | { operation: 'import'; candidateId: string; expectedFingerprint: string; confirmed: true };
+export type GitManagedSshIntent = { operation: 'inventory' }
+  | { operation: 'discover'; passphrase?: string }
+  | { operation: 'import'; candidateId: string; expectedFingerprint: string; confirmed: true; passphrase?: string };
 
 export type GitManagedSshResult =
   | { status: 'available'; credentials: GitManagedSshCredential[] }
@@ -942,6 +943,8 @@ export interface GitWorktreeInfo {
   title?: string;
   /** When the user pinned the task to the top of the sidebar; absent while unpinned. */
   pinnedAt?: number;
+  /** The user's pin list the pin is filed in; absent for Pinned. */
+  pinList?: string;
   provenance?: GitContributorWorktreeProvenance;
 }
 
@@ -1174,7 +1177,7 @@ interface GitWorktreeAPI {
   /** Sets the task title of the worktree at `directory` as the user's; an empty title clears it. */
   setTitle?(directory: string, title: string): Promise<GitWorktreeTitleResult>;
   /** Pins or unpins the task of the worktree at `directory`. */
-  setPinned?(directory: string, pinned: boolean): Promise<GitWorktreePinResult>;
+  setPinned?(directory: string, pinned: boolean, list?: string | null): Promise<GitWorktreePinResult>;
   /** `directory` is the worktree to snapshot. */
   snapshot?(directory: string, payload: GitWorktreeSnapshotPayload): Promise<GitWorktreeSnapshotResult>;
   /** `directory` is the project; the worktree is removed, its branch kept. */
@@ -1461,6 +1464,8 @@ export interface ProjectEntry {
   id: string;
   path: string;
   label?: string;
+  /** Where `label` came from: the folder name, or a name the user typed. */
+  labelSource?: 'auto' | 'manual';
   icon?: string | null;
   iconImage?: {
     mime: string;
@@ -2118,11 +2123,21 @@ export interface RelayHostStatus {
   identityConflict: boolean;
 }
 
+export interface ClipboardAPI {
+  /** Present on a Linux desktop, the only runtime that can reach PRIMARY. */
+  selection: {
+    readText(): Promise<string>;
+    writeText(text: string): Promise<void>;
+  };
+}
+
 export interface RuntimeAPIs {
   /** Native local picker. Web/mobile fall back to their browser file input; VS Code does not import themes. */
   themeFiles?: {
     pick(): Promise<{ status: 'unsupported' } | { status: 'picked'; file: { name: string; size: number; text: string } | null }>;
   };
+  /** Linux desktop's native PRIMARY buffer; absent in browsers, mobile, VS Code and remote pages. */
+  clipboard?: ClipboardAPI;
   runtime: RuntimeDescriptor;
   terminal: TerminalAPI;
   git: GitAPI;

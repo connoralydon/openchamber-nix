@@ -334,6 +334,15 @@ export const selectSkillsForDirectory = (
 };
 
 /**
+ * Whether one project's skills have been read; until then its empty list is
+ * not an answer. A failed read settles it to the skills known before.
+ */
+export const selectSkillsLoadedForDirectory = (
+  state: Pick<SkillsStore, 'skillsByDirectory'>,
+  directory?: string | null,
+): boolean => Object.hasOwn(state.skillsByDirectory, getSkillsCacheKey(resolveDirectory(directory)));
+
+/**
  * The policy statements of one project, or null while none could be read; an
  * omitted directory means the project the app is on.
  */
@@ -516,6 +525,7 @@ export const useSkillsStore = create<SkillsStore>()(
             })();
 
             for (let attempt = 0; attempt < 3; attempt++) {
+              if (generation !== skillsGeneration) return false;
               try {
                 const queryParams = directory ? `?directory=${encodeURIComponent(directory)}` : '';
 
@@ -523,6 +533,7 @@ export const useSkillsStore = create<SkillsStore>()(
                   priority: 'low',
                   headers: directory ? { 'x-opencode-directory': directory } : undefined,
                 }));
+                if (response === undefined) return false;
                 if (!response.ok) {
                   throw new Error(`Failed to list skills: ${response.status}`);
                 }

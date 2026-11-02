@@ -17,7 +17,7 @@ that writes it:
 
 | Keys | Owner | Reached through |
 |---|---|---|
-| `version`, `scheduledTasks` | `project-config.js` (scheduled-task runtime) | `/api/projects/:projectId/scheduled-tasks/*` |
+| `version`, `scheduledTasks`, `scheduledWorktreeCleanups` | `project-config.js` (scheduled-task runtime) | `/api/projects/:projectId/scheduled-tasks/*` and internal cleanup recovery |
 | `setup-worktree`, `setup-worktree-wait`, `projectActions`, `projectActionsPrimaryId`, `draftStarters`, `projectPath` | `project-setup.js` via `readProjectSetup` / `updateProjectSetup` on the same runtime | `GET/PUT /api/projects/:projectId/config` (`routes.js`) |
 
 Notes, todos, and plans moved out of this file to `packages/web/server/lib/project-context`.
@@ -89,12 +89,38 @@ UI (`packages/ui/src/lib/sharedTrustConfirmation.ts`).
 
 ## Modules
 
+`session-directory.js` serves `POST /api/projects/session-directory` for a
+session's unregistered host destination. It validates the directory, verifies
+the session still lives there, and checks the existing OpenCode fingerprint
+trust before appending. Empty configurations and already trusted fingerprints
+need no new answer. Untrusted code answers 403 `opencode_trust_required`; a
+changed destination answers 409; failed writes answer 503. It creates no folder,
+runs no project code, and never changes active-project or directory pointers.
+A destination inside a registered project returns that project. A linked
+worktree whose repository (the trust assessment's `repositoryKey`) matches a
+registered project's also returns that project, appends nothing, and emits
+`openchamber:worktree-changed` so clients list the worktree. That match
+assesses each registered project inside the settings write queue, so a project
+whose assessment takes over 2 seconds (a hung mount) counts as no match instead
+of holding the queue. Web, desktop and both mobile surfaces use the active server. VS Code registers
+through its workspace-folder bridge instead.
+
+### Why registration uses the settings write queue
+
+A background session and another window can update settings together. Resolving
+the project against the latest registry inside its write queue preserves other
+projects and metadata. Reading settings before enqueueing a whole replacement
+would lose an intervening append. A malformed registry fails without repair.
+
 - `project-id.js` — `createProjectIdFromPath` / `projectPathFromId`: the path-derived id (`path_<base64url>`) that names the file, and the checkout path back from it. The shared UI derives the same id (`packages/ui/src/lib/projectId.ts`); both sides must agree. `projectConfigFileStemOf`: the stem that names the file and the sibling folder for an id, see the file name invariant below.
 - `project-config.js` — `createProjectConfigRuntime`: raw read, atomic write, the cross-process file lock (Electron and a CLI `serve` can share one projects dir), scheduled-task normalization, and the project-setup read/update.
 - `project-setup.js` — sanitizers, the shared-file parser (`parseSharedProjectConfig`, `normalizePlansDir`), the merge (`mergeProjectSetup`), and the personal view for the setup keys. Mirrored in the VS Code extension host (`packages/vscode/src/project-setup.ts`), which owns the same file when the webview has no OpenChamber server; keep the two in sync.
 - `routes.js` — directory activation and setup routes. `/api/openchamber/directory` and `/api/projects` are on the JSON-body allowlist in `opencode/core-routes.js`. Both register before the generic OpenCode proxy. Web, Electron, hosted mobile, and Capacitor use the server route. VS Code handles the directory route locally through `api:openchamber/directory` and keeps its existing manager-owned directory selection.
 
 ## Invariants
+
+- Scheduled worktree cleanup records are keyed by session id and survive task deletion. Each captures the created branch and directory identity. Scanning the project config files recovers runs even when their project is no longer registered; an unreadable file or malformed record does not erase other records. Claims and journal changes use the project lock, but Git removal runs outside it. A `removing` record carries both `ownerPID` and the native `ownerInstance` creation fingerprint until completion; PID reuse does not retain ownership. Failure releases ownership and a dead instance can be reclaimed. Unreadable process identity fails closed. Successful cleanup clears only that run's record. See `../scheduled-tasks/DOCUMENTATION.md` for the execution, goal and background-command gates.
+- Cleanup finalization accepts an abort signal and checks it after acquiring the project lock, after awaited claim checks, and before clearing the journal. An aborted claimed operation releases ownership without discarding the record; that release is allowed to finish after cancellation.
 
 - **Every write is a locked read-modify-write of the whole document.** Keys the writer does not own, and keys from newer builds, come back out unchanged. A setup update and a scheduled-task update never clobber each other.
 - **A wrongly shaped key is a 400, not a silent drop.** `projectSetupPatchToStored` throws; the file is untouched. Values inside a well-shaped key are sanitized (trimmed, capped, deduplicated) rather than rejected.

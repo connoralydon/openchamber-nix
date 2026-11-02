@@ -9,10 +9,11 @@ interface DiffViewToggleProps {
     mode: DiffViewMode;
     onModeChange: (mode: DiffViewMode) => void;
     className?: string;
+    iconClassName?: string;
 }
 
 /** Side by side as a toggle: the fill says it is on, so the icon and label never flip. */
-export const DiffViewToggle: React.FC<DiffViewToggleProps> = ({ mode, onModeChange, className }) => {
+export const DiffViewToggle: React.FC<DiffViewToggleProps> = ({ mode, onModeChange, className, iconClassName }) => {
     const { t } = useI18n();
     const handleClick = React.useCallback(
         (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -28,6 +29,7 @@ export const DiffViewToggle: React.FC<DiffViewToggleProps> = ({ mode, onModeChan
             icon="layout-column"
             pressed={mode === 'side-by-side'}
             className={className}
+            iconClassName={iconClassName}
             onClick={handleClick}
         />
     );
