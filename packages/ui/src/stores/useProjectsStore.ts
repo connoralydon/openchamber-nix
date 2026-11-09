@@ -61,7 +61,7 @@ interface ProjectsStore {
 
   addProject: (path: string, options?: { label?: string; id?: string }) => Promise<ProjectEntry | null>;
   adoptSessionProject: (sessionId: string, directory: string, isCurrent: () => boolean) => Promise<boolean>;
-  addProjects: (paths: string[], options?: { fromOpenCode?: boolean }) => Promise<ProjectEntry[]>;
+  addProjects: (paths: string[]) => Promise<ProjectEntry[]>;
   removeProject: (id: string) => void;
   setActiveProject: (id: string) => void;
   setActiveProjectIdOnly: (id: string) => void;
@@ -404,6 +404,17 @@ const persistProjects = (projects: ProjectEntry[], activeProjectId: string | nul
   void updateDesktopSettings({ projects, activeProjectId: activeProjectId ?? undefined });
 };
 
+// Discovery looks the project up in the server's list, so it waits for the
+// debounced write that adds these entries. One project at a time, so adding a
+// batch does not walk every folder at once.
+const discoverIconsOnceSaved = async (get: () => ProjectsStore, entries: ProjectEntry[]) => {
+  const saved = await updateDesktopSettings({ projects: get().projects });
+  if (!saved.ok) return;
+  for (const entry of entries) {
+    await get().discoverProjectIcon(entry.id);
+  }
+};
+
 const persistManualProjectOrder = (manualOrder: string[]) => {
   try {
     safeStorage.setItem(getProjectsStorageKey() + ':manualOrder', JSON.stringify(manualOrder));
@@ -701,13 +712,12 @@ export const useProjectsStore = create<ProjectsStore>()(
       }
 
       get().setActiveProject(entry.id);
-      void get().discoverProjectIcon(entry.id);
+      void discoverIconsOnceSaved(get, [entry]);
       return entry;
     },
 
-    addProjects: async (paths: string[], options?: { fromOpenCode?: boolean }) => {
+    addProjects: async (paths: string[]) => {
       if (isVSCodeProjectsRuntime) {
-        if (options?.fromOpenCode) throw new Error('OpenCode project import is unavailable in VS Code');
         // VS Code paths are added via runtimeApis.vscode.addWorkspaceFolder,
         // which is reached only by addProject. Iterate so valid selections
         // succeed instead of silently returning []. Dedupe by path so the
@@ -726,9 +736,6 @@ export const useProjectsStore = create<ProjectsStore>()(
       }
       const current = get();
       const existingPaths = new Set(current.projects.map((project) => project.path));
-      if (options?.fromOpenCode && (!current.hasServerSnapshot || current.serverSnapshotFailed)) {
-        throw new Error('Project settings are unavailable');
-      }
       const now = Date.now();
       const entries: ProjectEntry[] = [];
       const seenPaths = new Set<string>();
@@ -754,27 +761,11 @@ export const useProjectsStore = create<ProjectsStore>()(
         });
       }
 
-      if (entries.length === 0 && !options?.fromOpenCode) {
+      if (entries.length === 0) {
         return [];
       }
 
       const nextProjects = [...current.projects, ...entries];
-      if (options?.fromOpenCode) {
-        const runtime = getRuntimeKey();
-        // Save the list and the retirement marker together. Failed saves leave
-        // the current list intact and the suggestion available for retry.
-        const result = await updateDesktopSettings({
-          projects: nextProjects,
-          openCodeProjectImportCompleted: true,
-        });
-        if (!result.ok || runtime !== getRuntimeKey()) throw new Error('Failed to save imported projects');
-        // Settings synchronization supplies the server-validated list. A folder
-        // removed during the import must not be put back by this continuation.
-        const ids = new Set(entries.map((entry) => entry.id));
-        const added = get().projects.filter((entry) => ids.has(entry.id));
-        for (const entry of added) void get().discoverProjectIcon(entry.id);
-        return added;
-      }
       set({ projects: nextProjects });
 
       if (streamDebugEnabled()) {
@@ -783,9 +774,7 @@ export const useProjectsStore = create<ProjectsStore>()(
 
       // Mirror addProject: the first newly added project becomes active.
       get().setActiveProject(entries[0].id);
-      for (const entry of entries) {
-        void get().discoverProjectIcon(entry.id);
-      }
+      void discoverIconsOnceSaved(get, entries);
       return entries;
     },
 
@@ -1040,6 +1029,7 @@ export const useProjectsStore = create<ProjectsStore>()(
         return { ok: false, error: 'Custom icons are not supported in this runtime' };
       }
 
+      const runtime = getRuntimeKey();
       try {
         const response = await runtimeFetch(`/api/projects/${encodeURIComponent(id)}/icon/discover`, {
           method: 'POST',
@@ -1054,15 +1044,23 @@ export const useProjectsStore = create<ProjectsStore>()(
           error?: string;
           skipped?: boolean;
           reason?: string;
-          settings?: DesktopSettings;
+          project?: { iconImage?: unknown } | null;
         } | null;
 
         if (!response.ok) {
           return { ok: false, error: payload?.error || 'Failed to discover project icon' };
         }
 
-        if (payload?.settings) {
-          get().synchronizeFromSettings(payload.settings, { adoptActiveProject: false });
+        // The search can outlast changes made in this window, so the answer's
+        // settings are already old: only this project's icon is taken from it.
+        // A full-list write still queued or in flight lacks the icon and would
+        // erase it on the server, so the list that has it is written after.
+        const iconImage = sanitizeProjectIconImage(payload?.project?.iconImage);
+        if (iconImage && runtime === getRuntimeKey() && get().projects.some((entry) => entry.id === id)) {
+          const projects = get().projects.map((entry) => (entry.id === id ? { ...entry, iconImage } : entry));
+          set({ projects });
+          cacheProjects(projects, get().activeProjectId);
+          void updateDesktopSettings({ projects });
         }
 
         return {

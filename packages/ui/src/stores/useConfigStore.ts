@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { listModelVariantIds, modelVariantNames } from "@/lib/modelVariants";
+import { listModelVariantIds, modelVariantNames, nextThinkingVariant } from "@/lib/modelVariants";
 import { AUTO_MODEL_ID, AUTO_PROVIDER_ID, isAutoModel } from '@/lib/routing/autoModel';
 import { selectAutoReady, useRoutingStore } from '@/stores/useRoutingStore';
 import type { StoreApi, UseBoundStore } from "zustand";
@@ -7,7 +7,8 @@ import { devtools, persist } from "zustand/middleware";
 import { findCatalogModel, type Provider, type Model, type Agent, type Config } from "@/lib/opencode/model";
 import type { DesktopSettings } from "@/lib/desktop";
 import type { CatalogKind } from "@/lib/opencode/events";
-import { OpencodeApiError, opencodeClient, type OpencodeHealthProbe } from "@/lib/opencode/client";
+import { opencodeClient, type OpencodeHealthProbe } from "@/lib/opencode/client";
+import { isLocationNotFoundError } from "@/lib/opencode/location-errors";
 import { isSameProjectConfigError, readProjectConfigError, type ProjectConfigError } from "@/lib/opencode/configError";
 import { scopeMatches, subscribeToConfigChanges } from "@/lib/configSync";
 import type { ModelMetadata } from "@/types";
@@ -22,6 +23,7 @@ import { useDirectoryStore } from "@/stores/useDirectoryStore";
 import { useProjectsStore } from "@/stores/useProjectsStore";
 import { resolveProjectForSessionDirectory } from "@/lib/projectResolution";
 import { isSpaceDirectory } from "@/lib/spaces/space-route";
+import { resolveChatsRootDirectory } from "@/lib/chatDirectories";
 import { streamDebugEnabled } from "@/stores/utils/streamDebug";
 import { parseModelIdentifier, parseModelSelection } from "@/lib/modelIdentifier";
 import { readRememberedEffort, rememberEffort, resolveEffortChoice, type EffortChoice } from "@/lib/modelEfforts";
@@ -902,13 +904,16 @@ const ensureModelsMetadataFetch = (
     }
 
     markStartupTrace('modelsMetadata:queued');
+    const runtimeContext = captureConfigRuntimeContext();
     // Model metadata (prices, limits, capabilities) only enriches the pickers
     // and usage display, so it waits until the browser is idle instead of
     // competing with startup for the network and main thread.
-    modelsMetadataInFlight = whenIdle()
-        .then(() => measureStartupTrace('modelsMetadata', fetchModelsDevMetadata))
+    const request: Promise<Map<string, ModelMetadata>> = whenIdle()
+        .then(() => isConfigRuntimeContextCurrent(runtimeContext)
+            ? measureStartupTrace('modelsMetadata', fetchModelsDevMetadata)
+            : new Map<string, ModelMetadata>())
         .then((metadata) => {
-            if (metadata.size > 0) {
+            if (metadata.size > 0 && modelsMetadataInFlight === request && isConfigRuntimeContextCurrent(runtimeContext)) {
                 markStartupTrace('modelsMetadata:set', { entries: metadata.size });
                 setModelsMetadata(metadata);
             }
@@ -916,8 +921,9 @@ const ensureModelsMetadataFetch = (
         })
         .catch(() => new Map<string, ModelMetadata>())
         .finally(() => {
-            modelsMetadataInFlight = null;
+            if (modelsMetadataInFlight === request) modelsMetadataInFlight = null;
         });
+    modelsMetadataInFlight = request;
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -1053,14 +1059,17 @@ const getFallbackProjectDirectory = (): string | null => {
 
 type ProjectDefaults = { projectDefaultAgent?: string; projectDefaultModel?: string; projectDefaultVariant?: string };
 
+const isChatDraftOpen = (): boolean => {
+    const session = useSessionUIStore.getState();
+    return !session.currentSessionId && Boolean(session.newSessionDraft?.open) && session.newSessionDraft.target === 'chat';
+};
+
 const getProjectDefaultsForConfigDirectory = (directory: string | null | undefined): ProjectDefaults => {
     const configDirectory = normalizeConfigPath(directory);
     if (!configDirectory) {
         return {};
     }
-    const session = useSessionUIStore.getState();
-    if (!session.currentSessionId && session.newSessionDraft?.open && session.newSessionDraft.target === 'chat'
-        && toDirectoryKey(configDirectory) === useConfigStore.getState().activeDirectoryKey) return {};
+    if (isChatDraftOpen() && toDirectoryKey(configDirectory) === useConfigStore.getState().activeDirectoryKey) return {};
     return readProjectDefaults(configDirectory);
 };
 
@@ -1254,10 +1263,6 @@ const _agentsLoadErrors = new Map<string, Error>();
 // OpenCode cannot open the directory at all (deleted, or a path it cannot
 // resolve). Retrying gives the same answer, and startup treats the project like
 // one whose folder is gone.
-const isLocationNotFound = (error: Error | undefined): boolean => (
-    error instanceof OpencodeApiError && error.tag === 'LocationNotFoundError'
-);
-
 const clearProjectConfigError = (directoryKey: string): void => {
     if (!useConfigStore.getState().projectConfigErrors[directoryKey]) return;
     useConfigStore.setState((state) => {
@@ -1279,14 +1284,16 @@ subscribeRuntimeEndpointChanged((detail) => {
     _inFlightAgents.clear();
     _agentsLoadGeneration.clear();
     _initializeAppInFlight = null;
+    modelsMetadataInFlight = null;
     if (detail.runtimeKey === detail.previousRuntimeKey) return;
     configInstanceGeneration += 1;
     useConfigStore.setState({
         configRuntimeKey: detail.runtimeKey,
+        modelsMetadata: new Map<string, ModelMetadata>(),
         directoryScoped: {},
         projectConfigErrors: {},
         lastInitFailure: null,
-        imageOnlyProviders: {},
+        settingsOnlyProviders: {},
         providers: [],
         agents: [],
         providersLoaded: false,
@@ -1568,11 +1575,11 @@ interface ConfigStore {
     /** Projects whose OpenCode config OpenCode refused to load, keyed by config-directory key. Runtime-only. */
     projectConfigErrors: Record<string, ProjectConfigError>;
     /**
-     * Per config-directory key: providers whose every model generates images.
-     * Kept apart from `providers`, which feeds the chat pickers; only Settings →
-     * Providers lists them. Runtime-only.
+     * Per config-directory key: providers with no chat model, so image models or
+     * none at all. Kept apart from `providers`, which feeds the chat pickers; only
+     * Settings → Providers lists them. Runtime-only.
      */
-    imageOnlyProviders: Record<string, ProviderWithModelList[]>;
+    settingsOnlyProviders: Record<string, ProviderWithModelList[]>;
     isInitialized: boolean;
     modelsMetadata: Map<string, ModelMetadata>;
     // OpenChamber settings-based defaults (take precedence over agent preferences)
@@ -1783,15 +1790,15 @@ const EMPTY_PROVIDERS: ProviderWithModelList[] = [];
 const EMPTY_AGENTS: Agent[] = [];
 
 /**
- * Providers of one project that offer only image models. Settings → Providers
+ * Providers of one project that offer no chat model. Settings → Providers
  * lists them next to `selectProvidersForDirectory`; no chat picker reads them.
  */
-export const selectImageOnlyProvidersForDirectory = (
-    state: Pick<ConfigStore, "imageOnlyProviders" | "activeDirectoryKey">,
+export const selectSettingsOnlyProvidersForDirectory = (
+    state: Pick<ConfigStore, "settingsOnlyProviders" | "activeDirectoryKey">,
     directory?: string | null,
 ): ProviderWithModelList[] => {
     const directoryKey = directory == null ? state.activeDirectoryKey : toConfigDirectoryKey(directory);
-    return state.imageOnlyProviders[directoryKey] ?? EMPTY_PROVIDERS;
+    return state.settingsOnlyProviders[directoryKey] ?? EMPTY_PROVIDERS;
 };
 
 export const selectConfigAgentsForDirectory = (
@@ -1904,7 +1911,7 @@ export const useConfigStore = create<ConfigStore>()(
                 lastDisconnectReason: null,
                 lastInitFailure: null,
                 projectConfigErrors: {},
-                imageOnlyProviders: {},
+                settingsOnlyProviders: {},
                 isInitialized: false,
                 modelsMetadata: new Map<string, ModelMetadata>(),
                 settingsDefaultModel: undefined,
@@ -2321,11 +2328,11 @@ export const useConfigStore = create<ConfigStore>()(
                         }
 
                         if (targetDirectoryKey === null) {
-                            if (Object.keys(state.imageOnlyProviders).length > 0) nextState.imageOnlyProviders = {};
-                        } else if (state.imageOnlyProviders[targetDirectoryKey]) {
-                            const { [targetDirectoryKey]: _cleared, ...imageOnlyProviders } = state.imageOnlyProviders;
+                            if (Object.keys(state.settingsOnlyProviders).length > 0) nextState.settingsOnlyProviders = {};
+                        } else if (state.settingsOnlyProviders[targetDirectoryKey]) {
+                            const { [targetDirectoryKey]: _cleared, ...settingsOnlyProviders } = state.settingsOnlyProviders;
                             void _cleared;
-                            nextState.imageOnlyProviders = imageOnlyProviders;
+                            nextState.settingsOnlyProviders = settingsOnlyProviders;
                         }
 
                         if (targetDirectoryKey === null || targetDirectoryKey === state.activeDirectoryKey) {
@@ -2357,8 +2364,8 @@ export const useConfigStore = create<ConfigStore>()(
                     markStartupTrace('loadProviders:called', { directoryKey, source, requestedDirectory, effectiveDirectory });
 
                     // Dedup: if a load is already in-flight for this directory, reuse it.
-                    // A fresh load waits it out instead: that request may have been
-                    // answered before the change that prompted this one.
+                    // A fresh call waits out any read started before it. Calls
+                    // waiting together share the replacement started afterward.
                     let existing = _inFlightProviders.get(inFlightKey);
                     if (existing && options?.fresh) {
                         await existing.catch(() => undefined);
@@ -2424,12 +2431,11 @@ export const useConfigStore = create<ConfigStore>()(
                                     ...provider,
                                     models: modelsByProvider.get(provider.id) ?? [],
                                 }));
-                            // A provider with image models only is still configured and
+                            // A provider with no chat model is still configured and
                             // manageable, so Settings lists it; chat never offers it.
-                            const imageOnlyProviders: ProviderWithModelList[] = providers
+                            const settingsOnlyProviders: ProviderWithModelList[] = providers
                                 .filter((provider) => provider.activation !== "disabled"
-                                    && !modelsByProvider.has(provider.id)
-                                    && imageModelsByProvider.has(provider.id))
+                                    && !modelsByProvider.has(provider.id))
                                 .map((provider) => ({
                                     ...provider,
                                     models: imageModelsByProvider.get(provider.id) ?? [],
@@ -2437,10 +2443,10 @@ export const useConfigStore = create<ConfigStore>()(
 
                             if (!isConfigRuntimeContextCurrent(runtimeContext)) return;
                             set((state) => {
-                                const previous = state.imageOnlyProviders[directoryKey] ?? EMPTY_PROVIDERS;
-                                return isSameProviderCatalog(previous, imageOnlyProviders)
+                                const previous = state.settingsOnlyProviders[directoryKey] ?? EMPTY_PROVIDERS;
+                                return isSameProviderCatalog(previous, settingsOnlyProviders)
                                     ? state
-                                    : { imageOnlyProviders: { ...state.imageOnlyProviders, [directoryKey]: imageOnlyProviders } };
+                                    : { settingsOnlyProviders: { ...state.settingsOnlyProviders, [directoryKey]: settingsOnlyProviders } };
                             });
                             // A re-read that returns the same catalog keeps the arrays the
                             // store already holds, so nothing subscribed to them re-renders.
@@ -2845,14 +2851,7 @@ export const useConfigStore = create<ConfigStore>()(
                     const currentVariant = currentOverride === undefined
                         ? state.currentVariant
                         : currentOverride;
-                    let nextOverride: string | null;
-
-                    if (currentVariant === null || currentVariant === undefined) {
-                        nextOverride = variantKeys[0];
-                    } else {
-                        const index = variantKeys.indexOf(currentVariant);
-                        nextOverride = index >= 0 ? (variantKeys[index + 1] ?? null) : null;
-                    }
+                    const nextOverride = nextThinkingVariant(variantKeys, currentVariant);
 
                     get().setCurrentVariantOverride(nextOverride, inheritedVariant);
                     // Cycling is a picker choice too: it becomes the model's
@@ -2995,8 +2994,8 @@ export const useConfigStore = create<ConfigStore>()(
                     markStartupTrace('loadAgents:called', { directoryKey, source, requestedDirectory, effectiveDirectory });
 
                     // Dedup: if a load is already in-flight for this directory, reuse it.
-                    // A fresh load waits it out instead: that request may have been
-                    // answered before the change that prompted this one.
+                    // A fresh call waits out any read started before it. Calls
+                    // waiting together share the replacement started afterward.
                     let existing = _inFlightAgents.get(inFlightKey);
                     if (existing && options?.fresh) {
                         await existing.catch(() => false);
@@ -3325,7 +3324,7 @@ export const useConfigStore = create<ConfigStore>()(
                             });
                             // A rejected project config fails the same way until the
                             // user edits the file; retrying only delays the message.
-                            if (readProjectConfigError(error) || (error instanceof Error && isLocationNotFound(error))) break;
+                            if (readProjectConfigError(error) || (error instanceof Error && isLocationNotFoundError(error))) break;
                             const waitMs = 200 * (attempt + 1);
                             await new Promise((resolve) => setTimeout(resolve, waitMs));
                             if (!isCurrentAgentLoad()) return false;
@@ -3596,6 +3595,23 @@ export const useConfigStore = create<ConfigStore>()(
 
                             return { override: undefined, inherited };
                         };
+
+                        // Only a live unsent pick overrides both an older per-agent
+                        // choice and a pinned model, including discovery gaps.
+                        const livePick = currentSessionId
+                            ? useSelectionStore.getState().getSessionModelPick(currentSessionId)
+                            : null;
+                        const hasLiveModelPick = currentSessionId
+                            ? livePick?.providerId === currentProviderId && livePick.modelId === currentModelId
+                            : hadManualSelection && Boolean(currentProviderId && currentModelId);
+                        if (hasLiveModelPick) {
+                            if (currentSessionId) {
+                                const selection = useSelectionStore.getState();
+                                selection.saveSessionModelSelection(currentSessionId, currentProviderId, currentModelId);
+                                selection.saveAgentModelForSession(currentSessionId, agentName, currentProviderId, currentModelId);
+                            }
+                            return;
+                        }
 
                         // Prefer a session-level manual override for this agent over the
                         // agent's configured default. Re-applying setAgent after subtask
@@ -4458,6 +4474,12 @@ export const useConfigStore = create<ConfigStore>()(
                             const resolvedInitialDirectory = (resolvedProject || resolveProjectDirectory(initialDirectory))
                                 ? resolveConfigDirectory(initialDirectory)
                                 : null;
+                            // A chat draft reads the managed Chats root, so it does not start on the
+                            // agents and defaults of the project the app is on. The user can leave
+                            // the draft during this wait, so the session state is read after it.
+                            const chatsRoot = isChatDraftOpen() ? await resolveChatsRootDirectory().catch(() => null) : null;
+                            if (!isConfigRuntimeContextCurrent(runtimeContext)) return;
+                            const chatDraftDirectory = isChatDraftOpen() ? resolveConfigDirectory(chatsRoot) : null;
                             // An open session offers its own folder's agents and models,
                             // the catalog activateDirectory loads when it is opened. A
                             // folder outside every project (a chat) must not borrow the
@@ -4466,13 +4488,13 @@ export const useConfigStore = create<ConfigStore>()(
                             const openSessionDirectory = sessionState.currentSessionId
                                 ? resolveConfigDirectory(sessionState.currentSessionDirectory)
                                 : null;
-                            const configDirectory = openSessionDirectory ?? resolvedInitialDirectory ?? getFallbackProjectDirectory();
+                            const configDirectory = openSessionDirectory ?? chatDraftDirectory ?? resolvedInitialDirectory ?? getFallbackProjectDirectory();
                             if (!configDirectory) {
                                 markStartupTrace('initializeApp:noProjectConfigDirectory');
                                 set({ isInitialized: true, isConnected: true, hasEverConnected: true, connectionPhase: "connected", lastInitFailure: null });
                                 return;
                             }
-                            if (!openSessionDirectory && !resolvedInitialDirectory && initialDirectory !== configDirectory) {
+                            if (!openSessionDirectory && !chatDraftDirectory && !resolvedInitialDirectory && initialDirectory !== configDirectory) {
                                 markStartupTrace('initializeApp:normalizedUnknownDirectoryToProject', {
                                     initialDirectory,
                                     configDirectory,
@@ -4502,7 +4524,7 @@ export const useConfigStore = create<ConfigStore>()(
                                 const configError = get().projectConfigErrors[configDirectoryKey];
                                 if (configError) {
                                     markStartupTrace('initializeApp:projectConfigInvalid', { configDirectoryKey, name: configError.name });
-                                } else if (isLocationNotFound(_agentsLoadErrors.get(configDirectoryKey))
+                                } else if (isLocationNotFoundError(_agentsLoadErrors.get(configDirectoryKey))
                                     || await opencodeClient.getDirectoryAvailability(configDirectory) === 'missing') {
                                     if (!isConfigRuntimeContextCurrent(runtimeContext)) return;
                                     markStartupTrace('initializeApp:projectDirectoryMissing', { configDirectoryKey });
@@ -4784,6 +4806,8 @@ if (typeof window !== "undefined" && !unsubscribeConfigStoreDirectoryChanges) {
         }
 
         markStartupTrace('directoryStore:changed', { previous: prevKey, next: nextKey });
+        // A chat draft stays on the Chats root's catalog while the app moves between projects.
+        if (isChatDraftOpen()) return;
         void hydrateConfigCatalogFromCache(toConfigDirectoryKey(state.currentDirectory));
         void useConfigStore.getState().activateDirectory(state.currentDirectory);
     });

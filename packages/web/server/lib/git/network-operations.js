@@ -1075,10 +1075,13 @@ export function createNetworkOperations({
     && left.transportMode === right.transportMode
     && (left.credentialId ?? null) === (right.credentialId ?? null)
     && (left.transportRevision ?? null) === (right.transportRevision ?? null);
-  const auxiliaryTransport = async (hydrationPlan, kind, rawEndpoint, controls, deadline) => {
+  const auxiliaryTransport = async (hydrationPlan, kind, rawEndpoint, controls, deadline, foundAfterPlanning = false) => {
     const pinned = hydrationPlan.plannedAuxiliaryAuthorities?.find((candidate) => candidate.kind === kind
       && candidate.rawEndpoint === rawEndpoint);
-    if (hydrationPlan.plannedAuxiliaryAuthorities && !pinned) {
+    // Planning inspects only checkouts that already exist, so an endpoint read
+    // inside a child this run cloned could never be pinned. It is checked
+    // against the repository authority planning pinned instead.
+    if (hydrationPlan.plannedAuxiliaryAuthorities && !pinned && !foundAfterPlanning) {
       throw operationError('GIT_AUXILIARY_AUTHORIZATION_REQUIRED', 'Git auxiliary endpoint authorization is required', 409);
     }
     const authority = pinned ?? await currentAuxiliaryAuthority(hydrationPlan, kind, rawEndpoint, controls, deadline);
@@ -1103,7 +1106,43 @@ export function createNetworkOperations({
       await safeRevoke(context, hydrationPlan.operationId);
       throw operationError('REMOTE_CHANGED', 'Git auxiliary endpoint grant changed', 409);
     }
-    return { authority, auxiliaryPlan, context };
+    return { authority, auxiliaryPlan, context, foundAfterPlanning };
+  };
+
+  const auxiliaryTransfer = async (transfer, hydrationPlan, controls, args, context, deadline) => {
+    const execute = () => commandResult(transfer.auxiliaryPlan, controls, args, context, deadline, { transfer: true });
+    if (!auditStore || !transfer.foundAfterPlanning) return execute();
+    const { authority, auxiliaryPlan } = transfer;
+    const endpointFingerprint = fingerprintRemoteUrl(auxiliaryPlan.rawEndpoint);
+    const kind = auxiliaryPlan.auxiliaryKind;
+    const recordId = `git:${hydrationPlan.operationId}:auxiliary:${crypto.randomUUID()}`;
+    const claimed = await awaitPhase(() => auditStore.plan({
+      id: recordId, initiator: 'user', executorKind: 'openchamber-server-git', runtime: runtimeIdentity,
+      repositoryId: hydrationPlan.repositoryAuthority?.repositoryId ?? null, providerAccountId: null,
+      target: { kind: 'git-network', operation: 'checkout-hydration', remotes: [], auxiliaries: [{ kind, endpointFingerprint }] },
+      transportReference: { kind: 'auxiliary', entries: [{ kind, endpointFingerprint, transport: auditTransportPart(authority) }] },
+    }), controls, deadline);
+    if (claimed?.status === 'existing') throw operationError('UNKNOWN', 'Git auxiliary audit identity is already in use', 409);
+    let failure;
+    try {
+      await awaitMutation(() => auditStore.start(recordId), controls, deadline);
+      const current = await currentAuxiliaryAuthority(hydrationPlan, kind, auxiliaryPlan.rawEndpoint, controls, deadline);
+      if (!sameAuxiliaryAuthority(authority, current)) throw operationError('REMOTE_CHANGED', 'Git auxiliary endpoint grant changed', 409);
+      return await execute();
+    } catch (error) {
+      failure = error;
+      throw error;
+    } finally {
+      try {
+        await awaitPhase(() => auditStore.finish(recordId, {
+          state: failure ? failure.cancelled || failure.timedOut ? 'cancelled' : 'failed' : 'succeeded',
+          errorCode: failure ? hydrationError(failure).error.code : null,
+          steps: failure ? ['validated'] : ['validated', 'transferred'],
+        }), undefined, Date.now() + CLEANUP_TIMEOUT_MS);
+      } catch {
+        if (!failure) throw operationError('UNKNOWN', 'Git auxiliary audit completion failed', 500);
+      }
+    }
   };
 
   const prepareHydrationPlans = async (plans, deadline) => {
@@ -1248,22 +1287,16 @@ export function createNetworkOperations({
         lfsBinaryAvailable: Boolean(binaryResult.trim()),
       });
       if (discovery.needed) {
-        if (discovery.endpoint.status !== 'resolved') {
-          if (discovery.client.status !== 'missing') {
-            throw operationError('INVALID_REQUEST', 'Git LFS endpoint could not be resolved safely', 400);
-          }
-        } else {
-          requirements.push({
-            kind: 'lfs',
-            path: '.',
-            rawEndpoint: discovery.endpoint.candidate.endpoint,
-            transferReady: discovery.client.status !== 'missing',
-            endpoint: {
-              displayUrl: redactRemoteUrl(discovery.endpoint.candidate.endpoint),
-              fingerprint: fingerprintRemoteUrl(discovery.endpoint.candidate.endpoint),
-            },
-          });
-        }
+        requirements.push({
+          kind: 'lfs',
+          path: '.',
+          rawEndpoint: discovery.endpoint.candidate.endpoint,
+          transferReady: discovery.client.status !== 'missing',
+          endpoint: {
+            displayUrl: redactRemoteUrl(discovery.endpoint.candidate.endpoint),
+            fingerprint: fingerprintRemoteUrl(discovery.endpoint.candidate.endpoint),
+          },
+        });
       }
     }
     const currentHead = (await localGit(directory, ['rev-parse', '--verify', 'HEAD'], controls, deadline)).trim().toLowerCase();
@@ -1345,7 +1378,7 @@ export function createNetworkOperations({
     const lfs = [];
     let moduleCount = 0;
     const childPlan = (directory) => ({ ...hydrationPlan, directory, authorityDirectory: hydrationPlan.directory });
-    const visit = async (directory, parentEndpoint, parentRemoteName, prefix, depth) => {
+    const visit = async (directory, parentEndpoint, parentRemoteName, prefix, depth, foundAfterPlanning = false) => {
       if (depth > SUBMODULE_DISCOVERY_LIMITS.maxRecursionDepth) {
         throw Object.assign(new Error('Submodule recursion exceeds its depth limit'), { code: 'SUBMODULE_DISCOVERY_LIMIT_EXCEEDED' });
       }
@@ -1385,8 +1418,11 @@ export function createNetworkOperations({
           if (childHead && childHead !== module.gitlink) {
             throw Object.assign(new Error('Existing submodule checkout does not match its gitlink'), { code: 'INVALID_SUBMODULE_GITLINK' });
           }
-          if (!childHead) {
-            const transfer = await auxiliaryTransport(childPlan(directory), 'submodule', endpoint.endpoint, controls, deadline);
+          const clonesChild = !childHead;
+          if (clonesChild) {
+            const transfer = await auxiliaryTransport(
+              childPlan(directory), 'submodule', endpoint.endpoint, controls, deadline, foundAfterPlanning,
+            );
             if (transfer.authority.transportMode === 'managed') await controls.markStepCompleted('authenticated');
             let keepChild = childExists;
             let childIdentity;
@@ -1403,9 +1439,9 @@ export function createNetworkOperations({
                   childIdentity = directoryIdentity(await fsImpl.lstat(childDirectory), childBirthtimeHolds);
                 });
               }
-              await commandResult(transfer.auxiliaryPlan, controls, [
+              await auxiliaryTransfer(transfer, hydrationPlan, controls, [
                 'clone', '--no-checkout', '--no-tags', '--', endpoint.endpoint, childDirectory,
-              ], { ...transfer.context, env: { ...transfer.context.env, GIT_LFS_SKIP_SMUDGE: '1' } }, deadline, { transfer: true });
+              ], { ...transfer.context, env: { ...transfer.context.env, GIT_LFS_SKIP_SMUDGE: '1' } }, deadline);
               await controls.markStepCompleted('transferred');
               await localGit(childDirectory, ['checkout', '--force', '--detach', module.gitlink], controls, deadline, { disableLfsFilters: true });
               childHead = (await localGit(childDirectory, ['rev-parse', '--verify', 'HEAD'], controls, deadline)).trim().toLowerCase();
@@ -1426,7 +1462,7 @@ export function createNetworkOperations({
             }
           }
           submodules.push({ path: resultPath, status: 'succeeded', endpoint: publicEndpoint });
-          await visit(childDirectory, endpoint.endpoint, 'origin', resultPath, depth + 1);
+          await visit(childDirectory, endpoint.endpoint, 'origin', resultPath, depth + 1, foundAfterPlanning || clonesChild);
         } catch (error) {
           const failure = hydrationError(error);
           const existing = submodules.findIndex((entry) => entry.path === resultPath);
@@ -1482,21 +1518,17 @@ export function createNetworkOperations({
         path: lfsPath, status: 'client-missing',
         error: publicError('GIT_LFS_CLIENT_MISSING', 'Git LFS is required for this checkout; install git-lfs and retry'),
       });
-      else if (discovery.endpoint.status !== 'resolved') lfs.push({
-        path: lfsPath, status: 'authorization-required',
-        error: publicError('AUTHENTICATION_REQUIRED', 'The Git LFS endpoint requires an explicit HTTPS grant'),
-      });
       else {
         const rawEndpoint = discovery.endpoint.candidate.endpoint;
         const endpoint = { displayUrl: redactRemoteUrl(rawEndpoint), fingerprint: fingerprintRemoteUrl(rawEndpoint) };
         try {
-          const transfer = await auxiliaryTransport(childPlan(directory), 'lfs', rawEndpoint, controls, deadline);
+          const transfer = await auxiliaryTransport(childPlan(directory), 'lfs', rawEndpoint, controls, deadline, foundAfterPlanning);
           if (transfer.authority.transportMode === 'managed') await controls.markStepCompleted('authenticated');
           try {
             const context = { ...transfer.context, env: { ...transfer.context.env, GIT_LFS_SKIP_SMUDGE: '1' } };
-            await commandResult(transfer.auxiliaryPlan, controls, [
+            await auxiliaryTransfer(transfer, hydrationPlan, controls, [
               '-c', `lfs.url=${rawEndpoint}`, 'lfs', 'fetch', parentRemoteName, 'HEAD',
-            ], context, deadline, { transfer: true });
+            ], context, deadline);
             await controls.markStepCompleted('transferred');
             await commandResult(transfer.auxiliaryPlan, controls, [
               '-c', `lfs.url=${rawEndpoint}`, 'lfs', 'checkout',

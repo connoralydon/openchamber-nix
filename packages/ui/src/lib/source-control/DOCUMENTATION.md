@@ -97,8 +97,8 @@ One repository works as one identity. `applyIdentity.ts` turns a chosen
 provider association through the exact-target mutation, writes the primary
 remote's transport grant from the identity's transport (`account`, `ssh`,
 `system`, or `anonymous`), and applies the author with
-`setGitIdentity(directory, profileId)`. A repository with no remote, and a
-runtime that holds no bindings (VS Code), receive the signature alone. The `global` profile is the System
+`setGitIdentity(directory, profileId)`. A repository with no remote receives the signature alone.
+VS Code mounts no identity surface, so it never applies an identity. The `global` profile is the System
 identity — it removes the provider association and clears the repository-local
 author so the person's own Git configuration answers, and OpenChamber never
 writes the machine's own (global or system) configuration. No choice asks for
@@ -112,7 +112,14 @@ unbinding removes those entries.
 an account identity whose instance host differs from the remote host, an
 account or anonymous identity on a non-HTTPS remote, or an SSH-key identity on a
 non-SSH remote is disabled with a localized reason (`describeIdentityApplicability`)
-and never proposed. `proposeIdentityForHost` proposes, among applicable identities,
+and never proposed. The instance's separate SSH address (`instanceSshUrl`) counts as
+its host for an SSH remote, so a Gitea or Forgejo instance whose `SSH_DOMAIN`
+differs from its web address still serves its own repositories.
+Remote recognition compares the separate SSH address only with SSH remotes,
+using normalized hostname and SSH port. SCP, omitted port and explicit port 22
+have the same default-port identity. An HTTP(S) remote on an SSH-only host
+produces neither a provider identity nor a repository link.
+`proposeIdentityForHost` proposes, among applicable identities,
 the one whose account answers for the remote host, then the default identity,
 then the System identity — the repository as it is. The add screen shows the
 repository as it is signed today, its own local author included, and writes
@@ -288,6 +295,8 @@ after browser storage is explicitly cleared or a webview is replaced with a new
 storage context.
 
 ## Provider registry
+
+GitHub live summaries carry optional `isInMergeQueue`, `mergeQueueEntry` and `autoMergeRequest` fields through tracked-items and the branch-status store. `SourceBoardActions`, shared by the board, tracker and branch preview, reads its PR's tracked state with the reading account and shows the waiting state with Cancel. Existing surfaces retain ownership of visibility-scoped client interest; the actions add no declaration. Background user merge follows belong to the server and do not consume the client's 300-item interest budget. Cancel uses the merge mutation's optional `cancel` intent, sent only when the provider reported waiting-merge fields. Other hosts keep their existing merge controls.
 
 `providers/` owns what the UI knows about each source-control provider. The
 connected server describes its providers as plain data

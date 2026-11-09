@@ -11,6 +11,12 @@ const readGuests = (json: string) => {
 };
 
 describe('parseGuestCatalogJson', () => {
+  test('a block keeps whether its frame answers', () => {
+    const block = { name: 'Card', description: 'Asks', args: ['title'], entry: 'card.html', answers: true };
+    const guest = { id: 'hello', name: 'Hello', icon: 'window', capabilities: { requested: [], granted: [] }, source: 'path', blocks: [block] };
+    expect(readGuests(JSON.stringify({ guests: [guest] }))?.[0]?.blocks?.[0]?.answers).toBe(true);
+  });
+
   test('one row it cannot read keeps the others and is listed by name', () => {
     const valid = {
       id: 'hello',
@@ -30,6 +36,7 @@ describe('parseGuestCatalogJson', () => {
         { id: null, name: null, builtIn: true },
         { id: null, name: null, builtIn: false },
       ],
+      opencodePlugins: null,
     });
   });
 
@@ -291,7 +298,20 @@ describe('parseGuestCatalogJson', () => {
     expect(parseGuestCatalogJson('{"guests":[{"id":"Nope"}]}')).toEqual({
       guests: [],
       unreadable: [{ id: null, name: null, builtIn: false }],
+      opencodePlugins: null,
     });
+  });
+
+  test('reads how OpenCode plugins reach OpenCode, and drops a delivery state this build does not know', () => {
+    type Envelope = { delivery: string; globalConfigPath: string | null; inGlobalConfig: string[] };
+    const listing = (opencodePlugins?: Envelope) => parseGuestCatalogJson(JSON.stringify({ guests: [], opencodePlugins }))?.opencodePlugins;
+    expect(listing({ delivery: 'restart', globalConfigPath: '/home/me/.config/opencode/opencode.json', inGlobalConfig: ['teapot-tools'] }))
+      .toEqual({ delivery: 'restart', globalConfigPath: '/home/me/.config/opencode/opencode.json', inGlobalConfig: ['teapot-tools'] });
+    // No package ships a plugin, or the global config could not be read: no path, no ids.
+    expect(listing({ delivery: 'file', globalConfigPath: null, inGlobalConfig: [] })).toEqual({ delivery: 'file', globalConfigPath: null, inGlobalConfig: [] });
+    // A newer server's state would draw a button for a case this build cannot describe.
+    expect(listing({ delivery: 'teleport', globalConfigPath: null, inGlobalConfig: [] })).toBeNull();
+    expect(listing(undefined)).toBeNull();
   });
 });
 
@@ -369,7 +389,7 @@ describe('session events on a catalog row', () => {
       sessionEvents,
     });
     const [guest, newer] = readGuests(JSON.stringify({
-      guests: [row(slice), { ...row({ events: ['turn-finished', 'turn-started'], content: false }), id: 'newer' }],
+      guests: [row(slice), { ...row({ events: ['turn-finished', 'turn-paused'], content: false }), id: 'newer' }],
     })) ?? [];
     expect(guest?.sessionEvents).toEqual(slice);
     expect(guest?.capabilities.requested).toEqual(['service', 'transcript']);
@@ -394,5 +414,18 @@ describe('notification channels on a catalog row', () => {
     expect(guest?.notifications).toEqual(slice);
     expect(malformed?.id).toBe('other');
     expect(malformed?.notifications).toBeUndefined();
+  });
+});
+
+test('reads an OpenCode service role and its approval capability from the catalog', () => {
+  const row = {
+    id: 'api-provider', name: 'API provider', icon: 'plug',
+    service: { runtime: 'host', provides: ['opencode'], granted: false },
+    capabilities: { requested: ['service', 'opencode'], granted: ['service'] },
+  };
+  expect(parseGuestCatalogJson(JSON.stringify({ guests: [row] }))).toEqual({
+    guests: [row],
+    opencodePlugins: null,
+    unreadable: [],
   });
 });

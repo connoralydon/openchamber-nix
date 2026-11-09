@@ -548,6 +548,13 @@ export const isDesktopShell = (): boolean => {
   return isElectronShell();
 };
 
+/** Native visibility includes minimized and tray-hidden windows, independently of focus. */
+export const getDesktopWindowVisibility = async (): Promise<boolean | null> => {
+  if (!isDesktopShell()) return null;
+  const parsed = z.object({ visible: z.boolean() }).safeParse(await invokeDesktop('desktop_get_current_window_state'));
+  return parsed.success ? parsed.data.visible : null;
+};
+
 /**
  * Raises the desktop window.
  *
@@ -597,9 +604,10 @@ const pendingSessionLinksSchema = z.array(z.object({
   sessionId: z.string().min(1),
   messageId: z.string().min(1).optional(),
   runtimeKey: z.string().min(1).optional(),
+  requireKnownSession: z.boolean().optional(),
 }));
 
-type PendingDesktopSessionLink = { sessionId: string; messageId: string | null; runtimeKey: string | null };
+type PendingDesktopSessionLink = { sessionId: string; messageId: string | null; runtimeKey: string | null; requireKnownSession: boolean };
 
 /**
  * Session links (`openchamber://session/...`) that reached the desktop app
@@ -608,6 +616,17 @@ type PendingDesktopSessionLink = { sessionId: string; messageId: string | null; 
  * host (`?host=<id>`) carries that host's runtime key. Taking them removes
  * them; outside the desktop local page there are none.
  */
+/** Install links that launched the app, before any window could listen. */
+export const takePendingDesktopExtensionInstalls = async (): Promise<string[]> => {
+  if (!isDesktopShell()) return [];
+  try {
+    const parsed = z.array(z.string()).safeParse(await invokeDesktop('desktop_take_pending_extension_installs'));
+    return parsed.success ? parsed.data : [];
+  } catch {
+    return [];
+  }
+};
+
 export const takePendingDesktopSessionLinks = async (): Promise<PendingDesktopSessionLink[]> => {
   if (!isDesktopShell() || !isDesktopLocalOriginActive()) return [];
   try {
@@ -617,6 +636,7 @@ export const takePendingDesktopSessionLinks = async (): Promise<PendingDesktopSe
         sessionId: link.sessionId,
         messageId: link.messageId ?? null,
         runtimeKey: link.runtimeKey ?? null,
+        requireKnownSession: link.requireKnownSession === true,
       }))
       : [];
   } catch (error) {

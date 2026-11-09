@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -39,7 +39,7 @@ import {
   ensureTunnelProfilesMigrated,
   EXIT_CODE,
   generateUiPassword,
-  getPreferredServerRuntime,
+  getServerRuntimeBinary,
   getInstanceFilePath,
   getPidFilePath,
   isOpenchamberCmdline,
@@ -198,7 +198,8 @@ function spawnOpenChamberLikeHungServer(port) {
 
 describe('cli args', () => {
   it('allows packaged distributions to force the Node server runtime', () => {
-    expect(getPreferredServerRuntime({ OPENCHAMBER_SERVER_RUNTIME: 'node' })).toBe('node');
+    expect(path.basename(getServerRuntimeBinary({ OPENCHAMBER_SERVER_RUNTIME: 'node' })))
+      .toBe(process.platform === 'win32' ? 'node.exe' : 'node');
   });
 
   it('loads fallback tunnel provider capabilities for CLI startup', () => {
@@ -551,6 +552,39 @@ describe('cli args', () => {
     });
   });
 
+  it('exits non-zero when a wait ends on a session that waits for the user', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalExitCode = process.exitCode;
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    let type = 'waiting';
+    globalThis.fetch = async () => createMockJsonResponse({ sessionStatus: { type }, messages: [] });
+    const run = (extra) => sessionCommand({ session: 'ses_1', directory: '/repo', port: 45677, ...extra }, 'messages');
+    try {
+      await run({ wait: true, json: true });
+      expect(process.exitCode).toBe(1);
+      expect(stderr).not.toHaveBeenCalled();
+
+      process.exitCode = undefined;
+      await run({ wait: true, quiet: true });
+      expect(process.exitCode).toBe(1);
+      expect(stderr).toHaveBeenCalledWith('Session is waiting for the user and has not finished.\n');
+
+      process.exitCode = undefined;
+      await run({});
+      expect(process.exitCode).toBeUndefined();
+
+      type = 'idle';
+      await run({ wait: true, quiet: true });
+      expect(process.exitCode).toBeUndefined();
+    } finally {
+      globalThis.fetch = originalFetch;
+      process.exitCode = originalExitCode;
+      stdout.mockRestore();
+      stderr.mockRestore();
+    }
+  });
+
   it('validates session message selectors before HTTP', async () => {
     await expect(sessionCommand({ session: 'ses_123', directory: '/repo', all: true, last: true }, 'messages'))
       .rejects.toThrow('--all cannot be combined with --last or --limit.');
@@ -898,6 +932,26 @@ describe('CLI HTTP helpers', () => {
         sessionId: 'ses_1',
         directory: '/repo',
       })).resolves.toEqual({ status: 'ok', sessionStatus: { type: 'idle' } });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('keeps parsed CLI options out of fetch', async () => {
+    const originalFetch = globalThis.fetch;
+    let init;
+    globalThis.fetch = async (_url, options = {}) => {
+      init = options;
+      return createMockJsonResponse({ status: 'ok' });
+    };
+    try {
+      await requestControlAction(45677, 'session.status', { sessionId: 'ses_1', directory: '/repo' }, {
+        session: 'ses_1',
+        directory: '/repo',
+        json: true,
+        uiPassword: 'secret',
+      });
+      expect(Object.keys(init).filter((key) => init[key] !== undefined).sort()).toEqual(['body', 'headers', 'method', 'signal']);
     } finally {
       globalThis.fetch = originalFetch;
     }

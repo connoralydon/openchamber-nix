@@ -16,10 +16,25 @@ This folder owns runtime-independent controls and their Base UI integration, inc
 - Icon actions over a document (the Files editor, a plan, a page, image or diagram in the chat, diff headers) use `ToolbarButton` from `action-toolbar.tsx`: 24px, a 14px icon, colour-only hover, the selection fill while a toggle is on, faded while disabled. A toggle keeps one icon and one label naming the option; the fill says whether it is on.
 - `ActionToolbar` takes the actions a document has, which depend on what the document is and never on its mode, so a mode switch moves no button. Its groups sit apart by space; with `fold`, unpinned actions move into "More actions" from the end of the row while it does not fit, after `start` gave up its width.
 - `Textarea` offers emoji on `:` in both modes (`components/emoji/`, placed by `components/inline-picker/`); its forwarded ref is the textarea element itself.
+- A bottom sheet's list is built from `MobileSheetList`: `MobileSheetRow` for every option and action, `MobileSheetSection` for its captions, and `MobileSheetSearch` in `MobileOverlayPanel`'s `subheader`, so the field stays put while the list scrolls. The chosen row takes the selection fill and a check. The model sheet draws its own rows to the same measures, because its list is virtual.
+- On a phone `DialogContent` is a bottom sheet: `mobile.css` shapes every dialog through `data-slot`, so callers keep one markup for desktop and phone, and the layer's keyboard rider follows the whole keyboard. Tablet layouts and a dialog with `items-start` on its layer keep their centred window.
 - Every scroller a user sees draws the app's overlay scrollbar, never the native one: `ScrollableOverlay` for a scroller the caller renders, `AttachedOverlayScrollbar` for one a library creates (CodeMirror's `.cm-scroller`), `PopupOverlayScrollbar` for a popup that scrolls itself (`DialogContent`, `DropdownMenuContent`, `ContextMenuContent`, the framed `Textarea`). A new `overflow-auto` element goes through one of them. Only fallback screens after a crash keep the native bar, so they depend on nothing that may have failed.
 - `OverlayScrollbar` draws a thumb only on an axis whose computed overflow is `auto` or `scroll`: a scroller its owner switched to `hidden`, or a menu left at `visible`, overflows without scrolling and shows none.
 
 ## Decisions
+
+### Which tooltip a control takes
+
+`Tooltip` is the base, for anything that is not a plain button, such as a whole row or a label. `ButtonTooltip` (`action-toolbar.tsx`) is one button that sits alone, disabled or not: its span takes the hover a disabled button refuses, and a menu trigger goes inside it. `HoverTooltip` (`row-tooltip.tsx`) is a button repeated in a list that mounts and unmounts rows, such as the transcript: it mounts a root only while hovered, adds no DOM, and needs no provider. `DelegatedTooltip` (`row-tooltip.tsx`) is the buttons of a list that keeps its rows mounted: controls carry `data-row-tooltip`, and one tooltip listens on the list. A `Tooltip` per row in either list would keep thousands of roots for a label that shows at most once.
+
+`HoverTooltip` and `DelegatedTooltip` run their own delay, 300 ms as in the app's `TooltipProvider`, because a tooltip with no trigger of its own never reads the provider.
+
+### Why KeepAlive snapshots before hiding
+
+`onBeforeHide` runs for the outgoing non-null key in React's before-mutation
+snapshot phase. Consumers can capture measurable DOM before Activity or a
+placeholder host hides it. Layout-effect cleanup can already see hidden nodes,
+so it cannot provide the same capture guarantee. Same-key updates do not capture.
 
 ### Why the toolbar folds by trying, not by arithmetic
 

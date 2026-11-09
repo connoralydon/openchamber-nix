@@ -35,6 +35,7 @@ import { useEnterprisePolicySync } from '@/hooks/useEnterprisePolicySync';
 import { useRoutingSync } from '@/hooks/useRoutingSync';
 import { useSourceControlProviderSync } from '@/hooks/useSourceControlProviderSync';
 import { useTrackerProviderSync } from '@/hooks/useTrackerProviderSync';
+import { useQuotaProviderSync } from '@/hooks/useQuotaProviderSync';
 import { useAgentMemorySync } from '@/hooks/useAgentMemorySync';
 import { resolvePlanRequestOwner } from '@/hooks/useProjectContextOwner';
 import { opencodeClient } from '@/lib/opencode/client';
@@ -60,7 +61,9 @@ import { useUIStore } from '@/stores/useUIStore';
 import { closeTopmostBackLayer } from '@/lib/mobileBackLayers';
 import { useUpdateStore } from '@/stores/useUpdateStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
+import { openSessionFromToast } from '@/sync/session-navigation';
 import { SyncProvider } from '@/sync/sync-context';
+import { toast } from '@/components/ui';
 
 import { SyncAppEffects } from './AppEffects';
 import { BusyDots } from '@/components/ui/busy-dots';
@@ -69,6 +72,7 @@ import { MobileHeader } from './MobileHeader';
 import { MobileInstancesSurface } from './MobileInstancesSurface';
 import { MobileSessionsSheet } from './MobileSessionsSheet';
 import { MobileFullscreenSurface } from './MobileFullscreenSurface';
+import { fileNameOf, sessionLineage } from './mobileFileRequest';
 import { connectMobileSettingsNavigation } from './mobileSettingsNavigation';
 import { UsageStatsView } from '@/components/views/usage/UsageStatsView';
 import { ArchiveSessionsView } from '@/components/views/ArchiveView';
@@ -79,7 +83,7 @@ import { MobileWorkspaceDrawer } from './MobileWorkspaceDrawer';
 import { shownMobileWorkspaceTabs, type MobileWorkspaceTab } from '@/lib/mobileWorkspaceTabs';
 import { DedicatedMobileAppProvider, type MobileAppActions } from './mobileAppContext';
 import { autoConnectLastInstance, getAutoConnectTargetLabel, logMobileConnectEvent, reprobeActiveConnection, suppressAutoConnectUntilManualConnect, type AutoConnectOutcome } from './mobileConnections';
-import { isCapacitorMobileApp, useNativeAndroidBackButton, useNativeMobileChrome, useNativeMobileLifecycle } from './mobileNativeChrome';
+import { isCapacitorMobileApp, useMobileWebBackButton, useNativeAndroidBackButton, useNativeMobileChrome, useNativeMobileLifecycle } from './mobileNativeChrome';
 import { reconnectAppForTransportSwitch, resetAppForRuntimeEndpointChange } from './runtimeEndpointReset';
 import { useAppFontEffects } from './useAppFontEffects';
 import { useFontsReady } from './useFontsReady';
@@ -174,7 +178,7 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
   const [openPlan, setOpenPlan] = React.useState<{ id: string; title: string; projectRef: ProjectRef } | null>(null);
   const [settingsInitialMobileStage, setSettingsInitialMobileStage] = React.useState<'nav' | 'page-content'>('nav');
   // When set, the Changes surface opens directly into the per-file diff for this path.
-  const [pendingChangesDiff, setPendingChangesDiff] = React.useState<{ path: string; staged: boolean } | null>(null);
+  const [pendingChangesDiff, setPendingChangesDiff] = React.useState<{ path: string; staged: boolean; scope?: 'turn' } | null>(null);
   const setSettingsPage = useUIStore((state) => state.setSettingsPage);
   const wideChatLayoutEnabled = useUIStore((state) => state.wideChatLayoutEnabled);
   const updateAvailable = useUpdateStore((state) => state.available);
@@ -213,21 +217,33 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
   //
   // A SIZE class, not a device check: an unfolded book foldable is a tablet
   // until it is folded shut, and the shell keeps running across that change.
-  const { enabled: isTabletLayout, roomyForPanels } = useTabletLayout();
+  const { enabled: isTabletLayout, roomyForPanels, roomyForOnePanel } = useTabletLayout();
+  // Where the sidebar has its own room it stays put: picking a session or
+  // opening a page does not put it away. Elsewhere on a tablet it is a guest.
+  const persistentSidebar = roomyForPanels || roomyForOnePanel;
   const orientation = useOrientation();
   const isPortrait = orientation === 'portrait';
   const hasHardwareKeyboard = useHardwareKeyboard();
-  const [sidebarOpen, setSidebarOpen] = React.useState(() => readTabletLayout().roomyForPanels);
+  const [sidebarOpen, setSidebarOpen] = React.useState(() => {
+    const layout = readTabletLayout();
+    return layout.roomyForPanels || layout.roomyForOnePanel;
+  });
 
   const toggleSidebar = React.useCallback(() => {
     setSidebarOpen((current: boolean) => !current);
   }, []);
 
   // Folding shut (or losing the room for a side-by-side layout) must not leave
-  // a sidebar open over a phone-width screen.
+  // a sidebar open over a phone-width screen. Unfolding opens it: the room is
+  // what the user unfolded for, and a closed sidebar left the screen looking
+  // like the same phone, only wider. A workspace open across the unfold keeps
+  // its place where only one panel fits.
+  const wasTabletLayoutRef = React.useRef(isTabletLayout);
   React.useEffect(() => {
     if (!isTabletLayout) setSidebarOpen(false);
-  }, [isTabletLayout]);
+    else if (!wasTabletLayoutRef.current && !workspaceOpen) setSidebarOpen(true);
+    wasTabletLayoutRef.current = isTabletLayout;
+  }, [isTabletLayout, workspaceOpen]);
 
   const openFilesSurface = React.useCallback(() => {
     setPendingChangesDiff(null);
@@ -236,14 +252,56 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
   }, []);
 
   // The agent asked for a file to be shown: open the files drawer and stage
-  // the path the way a chat file link does, so the surface routes to it.
+  // the path the way a chat file link does, so the surface routes to it. A
+  // session the user is not looking at only announces the file, and staging
+  // waits for the tap: a stored path would send the files drawer of the session
+  // on screen to that file the next time it opens.
   React.useEffect(() => subscribeOpenchamberEvents((event) => {
     if (event.type !== 'file-open-request') return;
     const directory = event.directory ?? useDirectoryStore.getState().currentDirectory;
     if (!directory) return;
-    useUIStore.getState().openContextFile(directory, event.path);
-    openFilesSurface();
-  }), [openFilesSurface]);
+    const showFile = () => {
+      useUIStore.getState().openContextFile(directory, event.path);
+      openFilesSurface();
+    };
+    const { sessionId } = event;
+    if (!sessionId) {
+      showFile();
+      return;
+    }
+    // A subagent can ask before its session reaches the global list, so a
+    // session the list does not know is read from the server.
+    const readSession = async (id: string) => useGlobalSessionsStore.getState().entityById.get(id)
+      ?? await opencodeClient.getSession(id).catch(() => null);
+    void sessionLineage(sessionId, readSession).then((lineage) => {
+      const isViewed = () => {
+        const { currentSessionId } = useSessionUIStore.getState();
+        return currentSessionId === sessionId || lineage.some((session) => session.id === currentSessionId);
+      };
+      if (isViewed()) {
+        showFile();
+        return;
+      }
+      const title = lineage[0]?.title;
+      toast.info(fileNameOf(event.path), {
+        id: `file-open-${sessionId}:${event.path}`,
+        description: title
+          ? t('chat.fileOpenRequest.toast.description', { session: title })
+          : t('chat.fileOpenRequest.toast.descriptionUntitled'),
+        action: {
+          label: t('chat.fileOpenRequest.toast.openSession'),
+          onClick: () => {
+            openSessionFromToast(sessionId, directory);
+            closeSurface();
+            setSessionsSheetOpen(false);
+            // A folder waiting for the user's trust switches later or never, and
+            // the drawer of the session still on screen must not get the file.
+            if (isViewed()) showFile();
+          },
+        },
+      });
+    });
+  }), [closeSurface, openFilesSurface, t]);
 
   // The agent asked for a saved plan to be shown: the plan opens the way a tap
   // on it in the Project knowledge drawer opens it.
@@ -254,7 +312,7 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
     setOpenPlan({ id: event.planId, title: event.title, projectRef });
   }), []);
 
-  const openChangesSurface = React.useCallback((diff: { path: string; staged: boolean } | null = null) => {
+  const openChangesSurface = React.useCallback((diff: { path: string; staged: boolean; scope?: 'turn' } | null = null) => {
     setPendingChangesDiff(diff);
     setWorkspaceTab('changes');
     setWorkspaceOpen(true);
@@ -267,18 +325,61 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
     IPAD_RIGHT_SIDEBAR_WIDTH,
     IPAD_WORKSPACE_SIDEBAR_MAX_WIDTH,
   );
-  // The workspace becomes a real side panel only where the screen can host the
-  // sidebar, the panel AND a readable chat at once. Everywhere else — a tablet
-  // in portrait, and an unfolded foldable in EITHER orientation, since its long
-  // side is barely wider than a tablet's short one — it stays the full-cover
-  // drawer, which is the layout that actually works at that width.
-  const workspaceAsPanel = roomyForPanels;
+  // The workspace becomes a real side panel where a readable chat is left
+  // beside it: with the sidebar at once where both fit, one at a time where
+  // only one does (below). Narrower tablets and near-square foldables keep the
+  // full-cover drawer, the layout that works at that width.
+  const workspaceAsPanel = roomyForPanels || roomyForOnePanel;
+
+  // One panel at a time: opening one puts the other away, and closing it
+  // brings back the one it displaced. Runs before paint, so the two never
+  // share a frame.
+  const displacedPanelRef = React.useRef<'sidebar' | 'workspace' | null>(null);
+  const previousPanelsRef = React.useRef({ sidebarOpen, workspaceOpen });
+  React.useLayoutEffect(() => {
+    const previous = previousPanelsRef.current;
+    previousPanelsRef.current = { sidebarOpen, workspaceOpen };
+    if (!roomyForOnePanel) {
+      // Room for both now (a 13-inch iPad turned to landscape): the panel the
+      // rule put away comes back. A phone drops it.
+      const displaced = displacedPanelRef.current;
+      displacedPanelRef.current = null;
+      if (roomyForPanels && displaced === 'sidebar') setSidebarOpen(true);
+      else if (roomyForPanels && displaced === 'workspace') setWorkspaceOpen(true);
+      return;
+    }
+    const sidebarOpened = sidebarOpen && !previous.sidebarOpen;
+    const workspaceOpened = workspaceOpen && !previous.workspaceOpen;
+    if (sidebarOpen && workspaceOpen) {
+      // The newer one stays. Both at once with neither just opened is a
+      // layout that just gained the rule (a wider one shrank): the chat wins.
+      if (sidebarOpened && !workspaceOpened) {
+        displacedPanelRef.current = 'workspace';
+        setWorkspaceOpen(false);
+      } else {
+        displacedPanelRef.current = 'sidebar';
+        setSidebarOpen(false);
+      }
+      return;
+    }
+    if (!workspaceOpen && previous.workspaceOpen && displacedPanelRef.current === 'sidebar') {
+      displacedPanelRef.current = null;
+      setSidebarOpen(true);
+    } else if (!sidebarOpen && previous.sidebarOpen && displacedPanelRef.current === 'workspace') {
+      displacedPanelRef.current = null;
+      setWorkspaceOpen(true);
+    }
+  }, [roomyForOnePanel, roomyForPanels, sidebarOpen, workspaceOpen]);
   const leftSlide = useIpadPanelSlide(isTabletLayout && sidebarOpen);
   const workspaceSlide = useIpadPanelSlide(workspaceAsPanel && workspaceOpen);
   // A layout that loses the panel (a tablet folded to a phone, a panel turned
-  // into the drawer) drops its width at once; only a close slides it out.
-  const workspacePanelWidth = workspaceAsPanel && workspaceSlide.placed ? rightResize.width : 0;
-  const sidebarWidth = isTabletLayout && leftSlide.placed ? leftResize.width : 0;
+  // into the drawer) drops its width at once; only a close slides it out. So
+  // does a panel the other one displaced where only one fits: holding its
+  // width through its slide squeezed the chat between both for that time.
+  const workspaceDisplaced = roomyForOnePanel && sidebarOpen;
+  const sidebarDisplaced = roomyForOnePanel && workspaceOpen;
+  const workspacePanelWidth = workspaceAsPanel && workspaceSlide.placed && !workspaceDisplaced ? rightResize.width : 0;
+  const sidebarWidth = isTabletLayout && leftSlide.placed && !sidebarDisplaced ? leftResize.width : 0;
   // Where a side panel waits while it is off its edge: the start one beyond
   // the start edge, the end one beyond the end edge.
   const offStart = direction === 'rtl' ? '100%' : '-100%';
@@ -318,11 +419,12 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
 
   const mobileActions = React.useMemo<MobileAppActions>(
     () => ({
-      openChanges: ({ diffPath, staged } = {}) => {
-        openChangesSurface(diffPath ? { path: diffPath, staged: staged === true } : null);
+      openChanges: ({ diffPath, staged, scope } = {}) => {
+        openChangesSurface(diffPath ? { path: diffPath, staged: staged === true, scope } : null);
       },
       openFiles: () => openFilesSurface(),
       openSourceBoard: () => openSurface('board'),
+      openPlan: setOpenPlan,
     }),
     [openChangesSurface, openFilesSurface, openSurface],
   );
@@ -416,6 +518,10 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
 
   useNativeAndroidBackButton(handleNativeBack);
 
+  // Mobile web has no back button event: the same ladder runs from the
+  // browser's Back, off a history guard held while a layer is open.
+  useMobileWebBackButton(handleNativeBack, Boolean(openPlan || activeSurface || workspaceOpen || sessionsSheetOpen));
+
   // The footer update item follows the shared update store, which in the
   // Capacitor shell tracks the app build (store updates), not the server. The
   // native app reaches server updates through Settings → About instead.
@@ -463,22 +569,22 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
   const leaveOverview = React.useCallback(() => {
     closeSurface();
     setSessionsSheetOpen(false);
-    if (isTabletLayout && !roomyForPanels) setSidebarOpen(false);
-  }, [closeSurface, isTabletLayout, roomyForPanels]);
+    if (isTabletLayout && !persistentSidebar) setSidebarOpen(false);
+  }, [closeSurface, isTabletLayout, persistentSidebar]);
 
   // An opened archived session replaces the page: back to the chat, the same
   // way picking a session from the list gives the space back.
   const leaveArchive = React.useCallback(() => {
     closeSurface();
     setSessionsSheetOpen(false);
-    if (isTabletLayout && !roomyForPanels) setSidebarOpen(false);
-  }, [closeSurface, isTabletLayout, roomyForPanels]);
+    if (isTabletLayout && !persistentSidebar) setSidebarOpen(false);
+  }, [closeSurface, isTabletLayout, persistentSidebar]);
 
 
   return (
     <DedicatedMobileAppProvider actions={mobileActions}>
       <div
-        className="oc-mobile-app-shell main-content-safe-area flex h-[100dvh] flex-row bg-background text-foreground"
+        className="oc-mobile-app-shell main-content-safe-area oc-side-safe-area flex h-[100dvh] flex-row bg-background text-foreground"
         data-page-scroll-lock="true"
       >
         {/* iPad: persistent full-height sessions sidebar; the chat column and
@@ -524,7 +630,7 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
                   // or creating a worktree: give the space back to the chat
                   // where the sidebar is a guest, keep it put where it is not.
                   onOpenChange={(value) => {
-                    if (!value && !roomyForPanels) setSidebarOpen(false);
+                    if (!value && !persistentSidebar) setSidebarOpen(false);
                   }}
                   footer={sessionsFooter}
                 />
@@ -798,14 +904,12 @@ function MobileAppContent({ apis }: MobileAppProps) {
   // The mobile shell has no layout-level session list sync, so a lost
   // `session.deleted` is reconciled here from the same complete global
   // active+archived snapshots, refreshed whenever the sessions sheet opens.
-  const globalActiveSessions = useGlobalSessionsStore((state) => state.activeSessions);
-  const globalArchivedSessions = useGlobalSessionsStore((state) => state.archivedSessions);
-  const hasAuthoritativeGlobalSessions = useGlobalSessionsStore((state) => state.status === 'ready');
-  const cleanupSessions = React.useMemo(
-    () => [...globalActiveSessions, ...globalArchivedSessions],
-    [globalActiveSessions, globalArchivedSessions],
-  );
-  useAuthoritativeSessionCleanup({ hasAuthoritativeGlobalSessions, sessions: cleanupSessions });
+  const authoritativeSessions = useGlobalSessionsStore((state) => state.authoritativeSessions);
+  const cleanupSessions = React.useMemo(() => authoritativeSessions ?? [], [authoritativeSessions]);
+  useAuthoritativeSessionCleanup({
+    hasAuthoritativeGlobalSessions: authoritativeSessions != null,
+    sessions: cleanupSessions,
+  });
   const [connectionEpoch, setConnectionEpoch] = React.useState(0);
   const [runtimeEndpointEpoch, setRuntimeEndpointEpoch] = React.useState(0);
   const [showConnectionRecovery, setShowConnectionRecovery] = React.useState(false);
@@ -1247,6 +1351,7 @@ function MobileAppContent({ apis }: MobileAppProps) {
   useEnterprisePolicySync();
   useSourceControlProviderSync(apis.sourceControl);
   useTrackerProviderSync(apis.trackers);
+  useQuotaProviderSync();
   // Same as App.tsx: the session's memory index and the Memory tab both read
   // this snapshot, and without it the phone showed no memory at all.
   useAgentMemorySync(currentDirectory || null);

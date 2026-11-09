@@ -28,7 +28,7 @@ import {
   isUnsafeUnauthenticatedLanAllowed,
   readAdvertisedLanUrl,
 } from './lib/security/bind-host.js';
-import { isEnterpriseMode, isNetworkAccessBlocked, NETWORK_ACCESS_BLOCKED_ERROR, readEnterprisePolicy } from './lib/enterprise-mode.js';
+import { isEnterpriseMode, isNetworkAccessBlocked, NETWORK_ACCESS_BLOCKED_ERROR, readEnterprisePolicy, watchEnterprisePolicy } from './lib/enterprise-mode.js';
 import {
   TUNNEL_MODE_MANAGED_LOCAL,
   TUNNEL_MODE_MANAGED_REMOTE,
@@ -68,6 +68,7 @@ import { createSettingsNormalizationRuntime } from './lib/opencode/settings-norm
 import { createSettingsHelpers } from './lib/opencode/settings-helpers.js';
 import { createThemeRuntime } from './lib/opencode/theme-runtime.js';
 import { createFeatureRoutesRuntime } from './lib/opencode/feature-routes-runtime.js';
+import { createPluginSwitchStore } from './lib/opencode/plugin-switches.js';
 import { parseServeCliOptions } from './lib/opencode/cli-options.js';
 import {
   isRequestAuthorized,
@@ -77,6 +78,8 @@ import {
 } from './lib/opencode/core-routes.js';
 import { registerOpenChamberRoutes } from './lib/opencode/openchamber-routes.js';
 import { createServerUtilsRuntime } from './lib/opencode/server-utils-runtime.js';
+import { createMcpOAuthSignIn } from './lib/opencode/mcp-oauth.js';
+import { getMcpConfig, listMcpConfigs, updateMcpConfig } from './lib/opencode/mcp.js';
 import { createOpenCodeTrust } from './lib/opencode-trust/index.js';
 import { registerSessionProjectRoutes } from './lib/projects/session-directory.js';
 import { guardOpenCodeFetch } from './lib/opencode-trust/fetch-guard.js';
@@ -121,6 +124,7 @@ import { createMessageQueueRuntime } from './lib/message-queue/runtime.js';
 import { createAutoReviewRuntime } from './lib/auto-review/runtime.js';
 import { createDispatchResultsRuntime } from './lib/dispatch-results/runtime.js';
 import { createPrWatchRuntime } from './lib/pr-watch/runtime.js';
+import { createMergeFollowRuntime } from './lib/github/merge-follow.js';
 import { createWorkflowAgentSessions } from './lib/workflows/agent-session.js';
 import { createWorkflowRuntime } from './lib/workflows/runtime.js';
 import { createWorkflowRunStore } from './lib/workflows/store.js';
@@ -129,10 +133,15 @@ import { createJevClient } from './lib/routing/jev.js';
 import { createSessionWorkRuntime } from './lib/session-work/runtime.js';
 import { createSessionLineage } from './lib/session-lineage.js';
 import { createGracefulShutdownRuntime } from './lib/opencode/shutdown-runtime.js';
-import { beginGuestServiceHost, beginGuestServiceShutdown, proxyGuestServiceRequest, stopAllGuestServices } from './lib/guests/service.js';
+import { beginGuestServiceHost, beginGuestServiceShutdown, getServiceStatus, holdGuestService, proxyGuestServiceRequest, stopAllGuestServices } from './lib/guests/service.js';
 import { guestServiceRegistryDir } from './lib/guests/service-registry.js';
-import { findInstalledGuest, listInstalledGuests } from './lib/guests/catalog.js';
+import { findInstalledGuest, listInstalledGuests, setGuestConfigurationNote } from './lib/guests/catalog.js';
 import { createExtensionSessionEvents } from './lib/guests/session-events.js';
+import { createGuestAgentContext } from './lib/guests/agent-context.js';
+import { getGuestAuth, guestAuthPersistPath } from './lib/guests/auth-store.js';
+import { createGuestInstructions } from './lib/guests/instructions.js';
+import { createServiceHostApi } from './lib/guests/service-host-api.js';
+import { createServiceLifetime } from './lib/guests/service-lifetime.js';
 import { extensionsPersistPath } from './lib/guests/persist.js';
 import { createGuestSurfaceRuntime } from './lib/guests/surface.js';
 import { BROWSER_PROVIDER_IDLE_MS, NOTIFICATIONS_OUTBOUND_PATH } from '@openchamber/sdk';
@@ -150,6 +159,7 @@ import { createSpacesHost } from './lib/spaces/host.js';
 import { createSpaceArchive } from './lib/spaces/space-archive.js';
 import { readIdleStopSetting, startIdleStop } from './lib/spaces/idle-stop.js';
 import { permissionDefaultOf, readSpacePermissionDefault } from './lib/spaces/space-permission-default.js';
+import { createInsideSpaceTaskNaming, SPACE_TASK_TITLE_ROUTE } from './lib/spaces/task-title.js';
 import { dockerHostOf } from './lib/spaces/places/ssh-host.js';
 import { SPACE_IDLE_EXIT_CODE } from './lib/spaces/layout.js';
 import { createSwitchController, registerSpaceRoutes } from './lib/spaces/routes.js';
@@ -160,6 +170,7 @@ import { readOpenCodeServiceEnv } from './lib/environment/opencode-service-env.j
 import { OPENCODE_CONFIG_DIR } from './lib/opencode/shared.js';
 import { createWorktreeBootstrapStore } from './lib/git/worktree-bootstrap-storage.js';
 import { createRemoteClientAuthRuntime } from './lib/client-auth/remote-clients.js';
+import { createClientPushAccess } from './lib/notifications/client-push-access.js';
 import { createClientPairingRuntime } from './lib/client-auth/pairing.js';
 import { attachRealtimeProxy } from './lib/realtime-proxy.js';
 import { createRelayService, relayBlockedByEnterprise } from './lib/relay/service.js';
@@ -172,6 +183,7 @@ import { createDevServerScanner } from './lib/dev-servers/routes.js';
 import { createDevTunnelRuntime } from './lib/dev-tunnel/runtime.js';
 import { registerBrowserControlRoutes } from './lib/browser-control/routes.js';
 import { createManagedConfigRuntime } from './lib/opencode/managed-config-file.js';
+import { openCodePluginDelivery } from './lib/guests/opencode-plugin.js';
 import { createLimitFailoverRuntime } from './lib/limit-failover/runtime.js';
 import { prepareInstanceDir } from './lib/opencode/instance-dir.js';
 import { createOpenChamberSessionService } from './lib/openchamber-sessions/routes.js';
@@ -180,10 +192,12 @@ import { createUnreadBaseline } from './lib/openchamber-sessions/unread-baseline
 import { createTurnDurationRecorder } from './lib/openchamber-sessions/turn-duration.js';
 import { createOpenCodeClient } from './lib/openchamber-sessions/opencode-client.js';
 import { createScheduledTaskService } from './lib/scheduled-tasks/service.js';
+import { createModelCatalogReader } from './lib/scheduled-tasks/model-catalog.js';
 import { createOpenChamberControlService } from './lib/openchamber-control/service.js';
 import { createPluginNotificationEmitter } from './lib/notifications/emit-route.js';
 import { OpenChamberControlError } from './lib/openchamber-control/error.js';
 import { createSessionLinker } from './lib/openchamber-sessions/session-link.js';
+import { linkedWorktreeOf } from './lib/openchamber-sessions/work-naming.js';
 import { createFileOpenRequester } from './lib/openchamber-control/file-open.js';
 import { createSecretFiles } from './lib/openchamber-control/secret-request.js';
 import { applyConnectAttemptTimeout } from './lib/network-defaults.js';
@@ -375,6 +389,7 @@ let notificationTemplateRuntime = null;
 let agentToolRuntime = null;
 let limitFailoverRuntime = null;
 let managedConfigRuntime = null;
+let stopEnterprisePolicyWatch = () => {};
 
 const createTimeoutSignal = (...args) => notificationTemplateRuntime.createTimeoutSignal(...args);
 const formatProjectLabel = (...args) => notificationTemplateRuntime.formatProjectLabel(...args);
@@ -390,6 +405,9 @@ const getCachedZenModels = (...args) => notificationTemplateRuntime.getCachedZen
 
 const OPENCHAMBER_DATA_DIR = OPENCHAMBER_USER_CONFIG_ROOT;
 const SETTINGS_FILE_PATH = path.join(OPENCHAMBER_DATA_DIR, 'settings.json');
+// OpenChamber's own plugin switches. They never touch the user's OpenCode
+// config: the managed child reads them from the config layer OpenChamber owns.
+const pluginSwitchStore = createPluginSwitchStore({ filePath: path.join(OPENCHAMBER_DATA_DIR, 'plugin-switches.json') });
 const PUSH_SUBSCRIPTIONS_FILE_PATH = path.join(OPENCHAMBER_DATA_DIR, 'push-subscriptions.json');
 const APNS_TOKENS_FILE_PATH = path.join(OPENCHAMBER_DATA_DIR, 'apns-tokens.json');
 const openCodeTrust = createOpenCodeTrust({
@@ -532,6 +550,8 @@ const pushRuntime = createPushRuntime({
   PUSH_SUBSCRIPTIONS_FILE_PATH,
   readSettingsFromDiskMigrated,
   writeSettingsToDisk,
+  // clientPushAccess needs this runtime, so it is created later: read it per send.
+  getInvalidSessionKeys: () => clientPushAccess.invalidSessionKeys(),
 });
 
 const getOrCreateVapidKeys = (...args) => pushRuntime.getOrCreateVapidKeys(...args);
@@ -570,6 +590,7 @@ const apnsRuntime = createApnsRuntime({
   APNS_TOKENS_FILE_PATH,
   readSettingsFromDiskMigrated,
   relayKeyStore,
+  getInvalidSessionKeys: () => clientPushAccess.invalidSessionKeys(),
 });
 
 const addOrUpdateApnsToken = (...args) => apnsRuntime.addOrUpdateApnsToken(...args);
@@ -1138,7 +1159,14 @@ const openCodeSessionClient = (directory) => createOpenCodeClient({
  * asks it — the UI over HTTP, scheduled tasks and agent-dispatched sessions in
  * process — so the answer cannot differ between them.
  */
+const guestInstructions = createGuestInstructions({ dataDir: OPENCHAMBER_DATA_DIR });
+const guestAgentContext = createGuestAgentContext({
+  listGuests: () => listInstalledGuests({ persistPath: extensionsPersistPath(OPENCHAMBER_DATA_DIR) }),
+  instructions: guestInstructions,
+});
+
 const sessionKnowledgeRuntime = createSessionKnowledgeRuntime({
+  readExtensionInstructions: guestAgentContext.instructionText,
   projectContextRuntime,
   agentMemoryRuntime,
   // Called, not captured: the resolver is declared further down, and taking a
@@ -1152,6 +1180,10 @@ const sessionKnowledgeRuntime = createSessionKnowledgeRuntime({
     return settings?.agentControlToolEnabled !== false;
   },
   readCheckoutBranch: getCheckedOutBranch,
+  isWorkNamingAvailable: async (directory) => {
+    if (/^\/spaces\/[0-9a-f]{12}(?:\/|$)/.test(directory)) return true;
+    return linkedWorktreeOf(directory, await getWorktrees(directory)) !== null;
+  },
   readPlaceholderBranch: readRenameableGeneratedBranch,
   isPageRenderingAvailable: async () => {
     if (isExternalOpenCode || ENV_SKIP_OPENCODE_START) return false;
@@ -1167,10 +1199,6 @@ const sessionKnowledgeRuntime = createSessionKnowledgeRuntime({
     if (isExternalOpenCode || ENV_SKIP_OPENCODE_START) return false;
     // Declared further down; only ever called after startup.
     return isWorkflowToolEnabled();
-  },
-  areAgentToolsInCodeMode: async () => {
-    const settings = await readSettingsFromDiskMigrated().catch(() => null);
-    return settings?.agentToolsCodeMode === true;
   },
   readSessionMetadata: readStoredSessionMetadata,
   // Pins are read from and written to OpenChamber's own store.
@@ -1224,6 +1252,15 @@ const extensionSessionEvents = createExtensionSessionEvents({
   // Both declared further down; only ever called after startup.
   isSessionAutoAccepting: (sessionId, directory, requestId) => permissionAutoAcceptRuntime.isPermissionAutoAnswered(sessionId, directory, requestId),
   isInAutoReview: (sessionId, turnEndedAt) => autoReviewRuntime.speaksFor(sessionId, turnEndedAt),
+});
+
+// Services that run with nobody asking: kept up, or woken on their clock.
+const extensionServiceLifetime = createServiceLifetime({
+  listGuests: () => listInstalledGuests({ persistPath: extensionsPersistPath(OPENCHAMBER_DATA_DIR) }),
+  proxyServiceRequest: proxyGuestServiceRequest,
+  holdService: holdGuestService,
+  serviceStatus: getServiceStatus,
+  persistPath: extensionsPersistPath(OPENCHAMBER_DATA_DIR),
 });
 
 const globalMessageStreamHub = createGlobalMessageStreamHub({
@@ -1344,6 +1381,10 @@ const prWatchRuntime = createPrWatchRuntime({
   insideSpace: Boolean(process.env.OPENCHAMBER_SPACE_IDLE_STOP_FILE),
 });
 prWatchRuntime.start(globalMessageStreamHub);
+const mergeFollowRuntime = createMergeFollowRuntime({
+  dataDir: OPENCHAMBER_DATA_DIR,
+  notify: (notification) => notificationTriggerRuntime.notifyPullRequest(notification),
+});
 
 // Agent workflows: scripts that fan a task out to many agents, run here while
 // the agent that asked stays free. Off until the user turns the tool on.
@@ -1443,6 +1484,10 @@ globalMessageStreamHub.subscribeEvent((event) => {
     if (payload.type === 'session.idle' && payload.properties?.aborted === true) {
       agentToolRuntime?.abortSession?.(payload.properties.sessionID);
     }
+    // The turn ended, so nobody here waits on a page of this session any more.
+    if (payload.type === 'session.idle' || payload.type === 'session.error') {
+      openChamberControlService.releaseAnswerWaits(payload.properties?.sessionID);
+    }
     sessionLineage.observe(payload);
     turnDurationRecorder.processPayload(payload, directory || payload.properties?.directory || '');
     sessionAssistRuntime.processPayload(payload, directory || payload.properties?.directory || '');
@@ -1523,6 +1568,16 @@ const processForwardedServerEvent = (payload, emitSyntheticEvent, spaceId = null
 };
 
 
+const mcpOAuthSignIn = createMcpOAuthSignIn({
+  storePath: path.join(OPENCHAMBER_DATA_DIR, 'mcp-oauth-assignments.json'),
+  buildOpenCodeUrl,
+  getOpenCodeAuthHeaders,
+  resolveProjectDirectory,
+  getMcpConfig,
+  listMcpConfigs,
+  updateMcpConfig,
+});
+
 const serverUtilsRuntime = createServerUtilsRuntime({
   // Read lazily: the archive store is created with the session service further
   // down, while the proxy is registered later still.
@@ -1534,6 +1589,7 @@ const serverUtilsRuntime = createServerUtilsRuntime({
   getMergeSpaceSessionList: () => (spacesHost ? (payload) => spacesHost.mergeSessionList(payload) : null),
   getSpaceEventHub: () => (spacesHost ? globalMessageStreamHub : null),
   openCodeTrust,
+  mcpOAuthSignIn,
   // The checkout gate loads a folder's saved setup state on its first request,
   // so a worktree that failed before a restart stays closed from the start.
   readWorktreeBootstrapStatus: (directory) => getWorktreeBootstrapGateStatus(directory, { bootstrapStore: worktreeBootstrapStore }),
@@ -1625,6 +1681,10 @@ const remoteClientAuthRuntime = createRemoteClientAuthRuntime({
   crypto,
   storePath: REMOTE_CLIENTS_FILE_PATH,
 });
+const clientPushAccess = createClientPushAccess({
+  listClients: remoteClientAuthRuntime.listClients,
+  removeDevicesOfSessions: [apnsRuntime.removeApnsDevicesOfSessions, pushRuntime.removePushDevicesOfSessions],
+});
 const clientPairingRuntime = createClientPairingRuntime({
   fsPromises,
   path,
@@ -1636,6 +1696,15 @@ const featureRoutesRuntime = createFeatureRoutesRuntime({
   clientReloadDelayMs: CLIENT_RELOAD_DELAY_MS,
   trackers: trackerRegistry,
   trackerSessionStatus,
+  pluginSwitchStore,
+  isPluginSwitchAvailable: () => !isExternalOpenCode && !ENV_SKIP_OPENCODE_START,
+  // Declared below. A user who sets OPENCODE_CONFIG owns that file, so the
+  // managed runtime answers `updated: false` and the switch needs a restart.
+  refreshPluginSwitches: async () => (
+    managedConfigRuntime
+      ? managedConfigRuntime.refreshManagedConfigFile()
+      : { updated: false, reason: 'no-managed-opencode' }
+  ),
 });
 const bootstrapRuntime = createBootstrapRuntime({
   createUiAuth,
@@ -1870,6 +1939,7 @@ const scheduledTasksRuntime = createScheduledTasksRuntime({
     const project = sanitizeProjects(settings?.projects || []).find((entry) => entry.id === projectID) ?? null;
     return resolveSessionDefaults({ settings, project });
   },
+  resolveAutoSelection: (input) => routingRuntime.resolveAutoSelection(input),
   listProjects: async () => {
     const settings = await readSettingsFromDiskMigrated();
     return sanitizeProjects(settings?.projects || []);
@@ -1955,6 +2025,14 @@ const emitAgentMemoryChangedEvent = (event) => {
     }
   }
 };
+// The catalog a scheduled run resolves its model against, read through the
+// same client the rest of the server uses. Every writer that stores a model
+// goes through the service, so one reader keeps one rule.
+const readModelCatalog = createModelCatalogReader({
+  buildOpenCodeUrl,
+  getOpenCodeAuthHeaders,
+  isOpenCodeDirectoryTrusted: (directory) => openCodeTrust.isTrusted(directory),
+});
 const scheduledTaskService = createScheduledTaskService({
   readSettingsFromDiskMigrated,
   sanitizeProjects,
@@ -1962,8 +2040,13 @@ const scheduledTaskService = createScheduledTaskService({
   scheduledTasksRuntime,
   chatsScope: scheduledChatsScope,
   resolvePrimaryWorktreeRoot,
+  readModelCatalog,
 });
 const openChamberSessionService = createOpenChamberSessionService({
+  onSessionArchived: (sessionID, archivedAt) => extensionSessionEvents.processPayload({
+    type: 'openchamber:session-archived',
+    properties: { sessionID, archivedAt },
+  }),
   chatsScope: scheduledChatsScope,
   readSettingsFromDiskMigrated,
   sanitizeProjects,
@@ -1984,6 +2067,7 @@ const openChamberSessionService = createOpenChamberSessionService({
   broadcastGlobalUiEvent: broadcastOpenChamberUiEvent,
   resolveAutoSelection: (input) => routingRuntime.resolveAutoSelection(input),
   isAutoReady: async () => (await routingRuntime.describe()).autoReady,
+  readProjectSetup: (projectID) => projectConfigRuntime.readProjectSetup(projectID),
 });
 // Browser actions are published to whichever OpenChamber clients are connected;
 // the one owning the browser panel answers. `emitRequest` returns the number of
@@ -2079,8 +2163,41 @@ const secretFiles = createSecretFiles({ directory: path.join(OPENCHAMBER_DATA_DI
 void secretFiles.sweep();
 setInterval(() => { void secretFiles.sweep(); }, 60 * 60 * 1000).unref();
 
+const insideSpaceTaskNaming = process.env.OPENCHAMBER_SPACE_TASK_TITLE_FILE && process.env.OPENCHAMBER_SPACE_USER_TASK_TITLE_FILE
+  ? createInsideSpaceTaskNaming({
+    agentFile: process.env.OPENCHAMBER_SPACE_TASK_TITLE_FILE,
+    userFile: process.env.OPENCHAMBER_SPACE_USER_TASK_TITLE_FILE,
+    announce: broadcastOpenChamberUiEvent,
+  }) : null;
+
+const serviceHostApi = createServiceHostApi({
+  listGuests: () => listInstalledGuests({ persistPath: extensionsPersistPath(OPENCHAMBER_DATA_DIR) }),
+  control: {
+    execute: (...args) => openChamberControlService.execute(...args),
+    resolveSessionDirectory: (sessionID) => openChamberControlService.resolveSessionDirectory(sessionID),
+    stopSession: (sessionID) => openChamberControlService.stopSession(sessionID),
+    answerPermission: (input) => openChamberControlService.answerPermission(input),
+    answerForm: (input) => openChamberControlService.answerForm(input),
+    dismissOpenForms: (sessionID) => openChamberControlService.dismissOpenForms(sessionID),
+  },
+  instructions: guestInstructions,
+  readSettings: async (guest) => (await getGuestAuth(guest.id, guestAuthPersistPath(OPENCHAMBER_DATA_DIR)))?.settings ?? {},
+  emitToFrames: (guestId, topic, data) => broadcastOpenChamberUiEvent({
+    type: 'openchamber:guest-service-event',
+    properties: { guestId, topic, data },
+  }),
+  setConfigurationNote: (guestId, message) => {
+    if (setGuestConfigurationNote(guestId, message)) broadcastOpenChamberUiEvent({ type: 'openchamber:guests-changed', properties: {} });
+  },
+});
+serviceHostApi.register();
+
 const openChamberControlService = createOpenChamberControlService({
   chatsScope: scheduledChatsScope,
+  chatRoots: [path.join(OPENCHAMBER_USER_CONFIG_ROOT, 'chats'), OPENCHAMBER_CHATS_DIR],
+  updateSessionMetadata: updateSessionMetadataWith,
+  readPendingRequests: () => sessionRuntime.getPendingBlockingRequestsSnapshot(),
+  isPermissionAutoAnswered: (sessionId, directory, permissionId) => permissionAutoAcceptRuntime.isPermissionAutoAnswered(sessionId, directory, permissionId),
   readSettingsFromDiskMigrated,
   sanitizeProjects,
   buildOpenCodeUrl,
@@ -2170,16 +2287,19 @@ const openChamberControlService = createOpenChamberControlService({
     createError: (message, status) => new OpenChamberControlError(message, status),
   }),
   workNaming: {
+    nameSpaceTask: (directory, title) => insideSpaceTaskNaming?.name(directory, title) ?? null,
     listWorktrees: getWorktrees,
     setWorktreeTaskTitle,
     readPlaceholderBranch: (directory) => readRenameableGeneratedBranch(directory),
     renamePlaceholderBranch: renameGeneratedWorktreeBranch,
-    updateMetadata: updateSessionMetadataWith,
   },
   dispatchResults: dispatchResultsRuntime,
   prWatch: prWatchRuntime,
   workflowRuntime,
   archiveStore: openChamberSessionService.archiveStore,
+  // The module the quota routes load, loaded on the first read: the same
+  // instance, extension providers included.
+  loadQuota: () => import('./lib/quota/index.js'),
 });
 
 const ensureGlobalWatcherStarted = async () => {
@@ -2196,6 +2316,11 @@ const ensureGlobalWatcherStarted = async () => {
 };
 const bootstrapOpenCodeAtStartup = async (...args) => {
   await openCodeLifecycleRuntime.bootstrapOpenCodeAtStartup(...args);
+  // These steps need a running OpenCode; a retry runs them once it starts.
+  if (openCodeLifecycleRuntime.scheduleBootstrapRetry(bootstrapOpenCodeAtStartup, finishOpenCodeBootstrap)) return;
+  finishOpenCodeBootstrap();
+};
+const finishOpenCodeBootstrap = () => {
   scheduleOpenCodeApiDetection();
   if (openCodeLifecycleState.openCodeProcess && !openCodeLifecycleState.isExternalOpenCode) {
     startHealthMonitoring();
@@ -2239,6 +2364,7 @@ const gracefulShutdownRuntime = createGracefulShutdownRuntime({
   autoReviewRuntime,
   prWatchRuntime,
   messageQueueRuntime,
+  mergeFollowRuntime,
   dispatchResultsRuntime,
   workflowRuntime,
   messageSearchRuntime,
@@ -2275,12 +2401,17 @@ const gracefulShutdownRuntime = createGracefulShutdownRuntime({
   beginGuestServiceShutdown,
   stopAllGuestServices,
   extensionSessionEvents,
+  extensionServiceLifetime,
   getGuestSurfaceRuntime: () => guestSurfaceRuntime,
   getRealtimeProxyRuntime: () => realtimeProxyRuntime,
   getDictationRuntime: () => dictationRuntime,
   getRelayService: () => relayServiceInstance,
   getRelayReconcileTimer: () => relayReconcileTimer,
   getSpacesHost: () => spacesHost,
+  stopFolderWatches: () => {
+    stopEnterprisePolicyWatch();
+    featureRoutesRuntime.stopFolderWatches();
+  },
 });
 
 const gracefulShutdown = (...args) => gracefulShutdownRuntime.gracefulShutdown(...args);
@@ -2329,6 +2460,20 @@ async function main(options = {}) {
     agentToolRuntime,
     limitFailoverRuntime,
     readSettings: () => readSettingsFromDiskMigrated(),
+    listExtensionSkillDirectories: guestAgentContext.skillDirectories,
+    listExtensionPluginDirectories: guestAgentContext.pluginDirectories,
+    openchamberVersion: OPENCHAMBER_VERSION,
+    readPluginDenials: () => pluginSwitchStore.denials(),
+  });
+  // A policy that changes while the app runs: the managed file lists what the
+  // catalog now refuses until it is rewritten, and every card re-reads the catalog.
+  stopEnterprisePolicyWatch = watchEnterprisePolicy({
+    onChange: () => {
+      managedConfigRuntime.refreshManagedConfigFile().catch((error) => {
+        console.warn('Failed to rewrite the managed OpenCode config after a policy change:', error?.message ?? error);
+      });
+      broadcastOpenChamberUiEvent({ type: 'openchamber:guests-changed' });
+    },
   });
   await ensureChatsDir({ fsPromises, chatsDir: OPENCHAMBER_CHATS_DIR, warn: (message) => console.warn(`[data-dir] ${message}`) });
 
@@ -2585,6 +2730,10 @@ async function main(options = {}) {
       // the browser refuses the request at preflight, before it reaches a route.
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept,X-Requested-With,Cache-Control,X-OpenCode-Directory,X-OpenCode-Directory-Encoding,Ngrok-Skip-Browser-Warning,X-OpenChamber-Surface,X-OpenChamber-Provider,X-OpenChamber-Model,X-OpenChamber-Part-Shells');
       res.setHeader('Access-Control-Expose-Headers', 'x-next-cursor');
+      // Without it the browser sends a preflight before every request: in the
+      // packaged app that was 45% of all requests while idle. Chromium caps
+      // the cache at two hours.
+      res.setHeader('Access-Control-Max-Age', '7200');
       res.setHeader('Vary', 'Origin');
       if (req.method === 'OPTIONS') {
         res.status(204).end();
@@ -2678,6 +2827,7 @@ async function main(options = {}) {
     // Re-evaluate the relay lifecycle after pairing/device changes (a revoked or
     // redeemed device can flip relay demand on or off).
     reconcileRelay: () => (relayServiceInstance ? relayServiceInstance.reconcile() : Promise.resolve()),
+    removeClientPushDevices: clientPushAccess.removeDevicesOfClients,
     getPairingTransports: resolvePairingTransports,
     getDirectCandidateUrls: resolveDirectLanUrls,
     // Stable server identity for client-side verification of learned addresses.
@@ -2765,6 +2915,10 @@ async function main(options = {}) {
     setSwitch: spacesSwitch.setSwitch,
     setMachine: spacesSwitch.setMachine,
     getArchive: () => spaceArchive,
+  });
+  app.get(SPACE_TASK_TITLE_ROUTE, async (_req, res) => {
+    if (!insideSpaceTaskNaming) return res.status(404).json({ error: 'This server is not inside an isolated space.' });
+    res.json(await insideSpaceTaskNaming.read());
   });
   realtimeProxyRuntime = attachRealtimeProxy({
     app,
@@ -2878,9 +3032,23 @@ async function main(options = {}) {
     openchamberVersion: OPENCHAMBER_VERSION,
     onGuestDeactivated: async (event) => {
       guestSurfaceRuntime?.endForGuest(event.guestId);
+      setGuestConfigurationNote(event.guestId, null);
+      if (event.removed) await guestInstructions.remove(event.guestId);
       return browserControlRouter.handleGuestDeactivated(event);
     },
-    onExtensionSessionEventsChanged: () => extensionSessionEvents.reconcile(),
+    onExtensionSessionEventsChanged: async () => {
+      await Promise.all([
+        extensionSessionEvents.reconcile(),
+        extensionServiceLifetime.reconcile(),
+        managedConfigRuntime?.refreshManagedConfigFile(),
+      ]);
+    },
+    // Lifecycle state that exists before OpenCode is up: the mode is the server's environment, not a probe.
+    getOpenCodePluginDelivery: () => openCodePluginDelivery({
+      external: isExternalOpenCode || ENV_SKIP_OPENCODE_START,
+      origin: ENV_CONFIGURED_OPENCODE_HOST?.origin || openCodeBaseUrl || null,
+      ownsConfigFile: managedConfigRuntime?.ownsConfigFile() ?? true,
+    }),
     extensionNotificationChannels,
     surfaceViewerHeaders: (guestId, viewerId) => guestSurfaceRuntime?.viewerHeaders(guestId, viewerId) ?? null,
     builtInExtensionsDir: options.builtInExtensionsDir,
@@ -2890,6 +3058,7 @@ async function main(options = {}) {
     resolveProjectDirectory,
     resolveOptionalProjectDirectory,
     validateDirectoryPath,
+    customThemesDir: OPENCHAMBER_USER_THEMES_DIR,
     readCustomThemesFromDisk,
     saveImportedTheme,
     deleteImportedTheme,
@@ -2921,6 +3090,7 @@ async function main(options = {}) {
     readSettingsFromDisk,
     readSettingsFromDiskMigrated,
     persistSettings,
+    persistResolvedSettings: (...args) => settingsRuntime.persistResolvedSettings(...args),
     sanitizeProjects,
     sanitizeSkillCatalogs,
     isUnsafeSkillRelativePath,
@@ -2958,8 +3128,11 @@ async function main(options = {}) {
     autoReviewRuntime,
     prWatchRuntime,
     routingRuntime,
+    mergeFollowRuntime,
     workflowRuntime,
   });
+  // Keeps and schedules the services the catalog asks for, after the routes their calls land on.
+  void extensionServiceLifetime.reconcile();
 
   // After bootstrap: the upgrade gate needs the real UI auth controller.
   guestSurfaceRuntime = createGuestSurfaceRuntime({
@@ -2994,6 +3167,7 @@ async function main(options = {}) {
     terminalRebindWindowMs: TERMINAL_INPUT_WS_REBIND_WINDOW_MS,
     terminalMaxRebindsPerWindow: TERMINAL_INPUT_WS_MAX_REBINDS_PER_WINDOW,
     environmentRuntime,
+    broadcastUiEvent: broadcastOpenChamberUiEvent,
     setupProxy,
     scheduleOpenCodeApiDetection,
     bootstrapOpenCodeAtStartup,

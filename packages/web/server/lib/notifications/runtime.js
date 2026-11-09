@@ -1,7 +1,9 @@
+import { createHash } from 'node:crypto';
 import { unwrapOpenCodeResponse } from '../opencode/response-envelope.js';
 import { createSessionActivityProbe } from '../opencode/session-activity.js';
 import { isEnterpriseMode } from '../enterprise-mode.js';
 import { genericNotificationTitle, truncateNotificationText } from './message.js';
+import { pullRequestNotificationTitle } from './pull-request-locales.js';
 import {
   defaultNotificationTemplates,
   notificationTexts,
@@ -52,16 +54,24 @@ export const createNotificationTriggerRuntime = (deps) => {
         buildOpenCodeUrl: (fetchPath) => `http://space${fetchPath}`,
         getOpenCodeAuthHeaders: () => ({}),
         fetchImpl: spaceFetchFor(spaceId) ?? unreachableSpaceFetch,
+        isSpace: true,
       }
     : hostSource);
   const hostActivityProbe = createSessionActivityProbe({ ...hostSource, timeoutMs: 2000 });
 
   // A parent goes idle while a background subagent still works; OpenCode then
   // hands the result back and the parent runs again. That first idle is a
-  // pause, so it announces nothing. When the check cannot be made, the idle is
-  // announced as before: a missed "ready" is worse than an early one.
+  // pause, so it announces nothing. OpenCode 2.2.6+ also lists background
+  // subagents deeper in the tree and background images; shell commands do not
+  // hold the announcement, since a dev server never ends. Running direct
+  // children are asked for in any case: OpenChamber's own child sessions
+  // (workflow agents) are no OpenCode jobs, and a space reaches only session
+  // routes. When the check cannot be made, the idle is announced as before: a
+  // missed "ready" is worse than an early one.
   const isPausedForSubagents = async (sessionId, spaceId) => {
     const activityProbe = spaceId ? createSessionActivityProbe({ ...sourceFor(spaceId), timeoutMs: 2000 }) : hostActivityProbe;
+    const backgroundJobs = await activityProbe.fetchRunningBackgroundJobs(sessionId);
+    if (backgroundJobs?.some((job) => job.kind !== 'shell')) return true;
     const statuses = await activityProbe.fetchActiveSessionStatuses();
     if (!statuses) return false;
     return (await activityProbe.hasWorkingChildren(sessionId, statuses)) === true;
@@ -104,7 +114,7 @@ export const createNotificationTriggerRuntime = (deps) => {
   const toApnsGenericPayload = (payload) => {
     const data = payload?.data && typeof payload.data === 'object' ? payload.data : {};
     const knownSessionName = typeof data.sessionName === 'string' ? data.sessionName.trim() : '';
-    const sessionName = knownSessionName || 'Session';
+    const sessionName = knownSessionName || (data.type === 'pull-request' ? '' : 'Session');
     const phoneBody = payload?.phoneBody ?? '';
     return {
       title: genericTitleOf(payload),
@@ -1038,6 +1048,25 @@ export const createNotificationTriggerRuntime = (deps) => {
     await sendSettlePush({ sessionId, directory, type: 'review', tag, title, body });
   };
 
+  const notifyPullRequest = async ({ item, event }) => {
+    const settings = await readSettingsFromDisk();
+    if (settings.notifyOnPullRequests === false) return;
+    if (settings.notificationMode !== 'always' && getIsWindowFocused?.()) return;
+    const title = pullRequestNotificationTitle(settings.locale, event);
+    if (!title) return;
+    const body = `${item.owner}/${item.repo}#${item.number}`;
+    // The tag reaches every channel even when enterprise mode strips the body,
+    // so it names the pull request only through a digest.
+    const tag = `pull-request-${createHash('sha256').update(`${item.instance}\n${body}`).digest('hex').slice(0, 16)}-${event}`;
+    const payload = { title, body, tag, kind: 'pull-request', requireHidden: settings.notificationMode !== 'always' };
+    if (settings.nativeNotificationsEnabled) {
+      const desktopNotificationDelivered = emitDesktopNotification(payload);
+      broadcastUiNotification(payload, { desktopNotificationDelivered });
+    }
+    await fanoutPush({ title, body, phoneBody: `${title}: ${body}`, tag, data: { url: '/', type: 'pull-request' } }, { requireNoSse: true });
+    sendToChannels({ kind: 'pull-request', title, body, tag }, settings);
+  };
+
   return {
     maybeSendPushForTrigger,
     setAutoAcceptSession,
@@ -1046,5 +1075,6 @@ export const createNotificationTriggerRuntime = (deps) => {
     clearPendingPushBadge,
     sendGoalSettlePush,
     notifyAutoReviewEnded,
+    notifyPullRequest,
   };
 };

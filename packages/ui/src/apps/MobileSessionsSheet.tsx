@@ -49,6 +49,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { formatShortcutForDisplay, getEffectiveShortcutCombo } from '@/lib/shortcuts';
 import { seedGlobalSessionStatusFromHost } from '@/sync/host-session-status-seed';
 import { useSessionUIStore } from '@/sync/session-ui-store';
+import { markAllSessionsViewed } from '@/sync/notification-store';
+import { useHasUnreadSession } from '@/sync/session-unread';
 import { useAllLiveSessions } from '@/sync/sync-context';
 import type { WorktreeMetadata } from '@/types/worktree';
 
@@ -61,6 +63,7 @@ import { MobileSessionList } from './mobileSidebar/MobileSessionList';
 import { MobileSidebarActionsProvider, useMobileSidebarRowsStore, type MobileSidebarActions } from './mobileSidebar/mobileSidebarState';
 import { useEdgeSwipe } from './useEdgeSwipe';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
+import { MOBILE_HEADER_BUTTON_CLASS, MOBILE_HEADER_CLASS } from '@/components/ui/mobileHeader';
 
 type MobileSessionsSheetProps = {
   open: boolean;
@@ -106,6 +109,20 @@ const GROUPING_OPTIONS = [
 
 /** Menu rows tall enough for a thumb. */
 const MOBILE_MENU_ITEM_CLASS = 'min-h-10 items-center justify-between';
+
+/** Mounts only with the open menu, so the sheet does not watch every session for it. */
+function MobileMarkAllReadItem(): React.ReactNode {
+  const { t } = useI18n();
+  const hasUnread = useHasUnreadSession();
+  return (
+    <DropdownMenuItem disabled={!hasUnread} onClick={markAllSessionsViewed} className={MOBILE_MENU_ITEM_CLASS}>
+      <span className="flex items-center gap-2">
+        <Icon name="check-double" className="size-4" />
+        {t('sessions.sidebar.header.actions.markAllRead')}
+      </span>
+    </DropdownMenuItem>
+  );
+}
 
 type ReorderProject = {
   id: string;
@@ -352,17 +369,17 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
         {renderMenuChoice('branch-names', 'sessions.sidebar.header.displayMode.worktreeNameByBranch', worktreeNameByBranch, toggleSetting(worktreeNameByBranch, setWorktreeNameByBranch, (next) => {
           void updateDesktopSettings({ sidebarWorktreeNameByBranch: next });
         }))}
+        <DropdownMenuSeparator />
         {canEditOrder ? (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => setEditingOrder(true)} className={MOBILE_MENU_ITEM_CLASS}>
-              <span className="flex items-center gap-2">
-                <Icon name="drag-move-2" className="size-4" />
-                {t('mobile.sessions.editOrder')}
-              </span>
-            </DropdownMenuItem>
-          </>
+          <DropdownMenuItem onClick={() => setEditingOrder(true)} className={MOBILE_MENU_ITEM_CLASS}>
+            <span className="flex items-center gap-2">
+              <Icon name="drag-move-2" className="size-4" />
+              {t('mobile.sessions.editOrder')}
+            </span>
+          </DropdownMenuItem>
         ) : null}
+        <MobileMarkAllReadItem />
+      
       </DropdownMenuContent>
     </DropdownMenu>
   ) : null;
@@ -469,7 +486,7 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
         {/* The list scrolls under the search field: the list is virtualized
             in its own scroller, which the field cannot join. */}
         {!editingOrder && !empty && searchShown ? (
-          <div className={cn('shrink-0 px-3 pb-2', variant === 'sidebar' ? 'pt-2' : 'pt-1')}>
+          <div className={cn('shrink-0 px-2 pb-1', variant === 'sidebar' ? 'pt-2' : 'pt-1')}>
             <SessionSearchInput
               inputRef={searchInputRef}
               value={query}
@@ -531,7 +548,7 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
             // iPad's sidebar keeps its height under the raised keyboard
             // (mobile.css), so its footer stays where it is.
             data-keyboard-rider={variant === 'drawer' ? '' : undefined}
-            className="flex shrink-0 items-center justify-between gap-2 border-t border-edge bg-background px-3 pt-1.5"
+            className="oc-sessions-footer flex shrink-0 items-center justify-between gap-2 border-t border-edge bg-background px-3 pt-1.5"
             style={{ paddingBottom: 'calc(0.375rem + var(--oc-safe-area-bottom, 0px))' }}
           >
             <div className="flex min-w-0 items-center">
@@ -624,7 +641,7 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
       <div className="flex h-full min-h-0 flex-col">
         {/* No title: the list below says what this is, and the actions need
             the width. Search opens from the leading button, as on the desktop. */}
-        <div className="flex h-[var(--oc-header-height,56px)] shrink-0 items-center gap-2 border-b border-edge px-3">
+        <div className={cn(MOBILE_HEADER_CLASS, 'border-b border-edge')}>
           {!editingOrder && !empty ? (
             <Button
               type="button"
@@ -663,10 +680,10 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
       }}
       ariaLabel={t('mobile.sessions.sheet.title')}
     >
-      <div className="flex h-[var(--oc-header-height,56px)] shrink-0 items-center gap-2 px-3">
+      <div className={MOBILE_HEADER_CLASS}>
         <button
           type="button"
-          className="flex size-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className={MOBILE_HEADER_BUTTON_CLASS}
           aria-label={t('mobile.surface.closeAria')}
           onClick={close}
           style={{ touchAction: 'manipulation' }}
@@ -804,7 +821,7 @@ const MobileSessionsDrawerContainer: React.FC<{
       aria-modal="true"
       aria-label={ariaLabel}
       aria-hidden={!open}
-      className="oc-keyboard-inset-surface fixed inset-0 z-50 flex flex-col bg-background text-foreground"
+      className="oc-keyboard-inset-surface oc-side-safe-area fixed inset-0 z-50 flex flex-col bg-background text-foreground"
       style={{
         paddingTop: 'var(--oc-safe-area-top, 0px)',
         // Settled state drops the transform entirely so the drawer isn't kept

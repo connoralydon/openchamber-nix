@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { hasGuestPage, requestedGuestCapabilities, resolveAttachEntry, resolveAttachMode, resolvePageEntry, resolveStatusSectionEntry, resolveStatusSectionSource, toPublicNotifications,
-  toPublicTracker, toPublicService, toPublicSessionEvents, toPublicSourceControl, toPublicIntegration, hostMeetsOpenChamberEngine, openChamberEngineMinimum } from '@openchamber/sdk';
+  toPublicQuota, toPublicTracker, toPublicService, toPublicSessionEvents, toPublicSourceControl, toPublicIntegration, hostMeetsOpenChamberEngine, openChamberEngineMinimum } from '@openchamber/sdk';
 import { parseManifestJson } from '@openchamber/sdk/schemas';
 
 import { listRelativeGuestScriptHrefs, resolveGuestHtmlRelativePath } from './html-tokens.js';
@@ -12,6 +12,7 @@ import { readEnterprisePolicy } from '../enterprise-mode.js';
 import { ensureGuestStorageIds, onExtensionStoreWrite, readExtensionStore } from './persist.js';
 import { buildPublicSocketBindings } from './sockets.js';
 import { isReservedBuiltInId, readBuiltInRegistry } from './builtins.js';
+import { resolveOpenCodePluginFolder } from './opencode-plugin.js';
 
 const builtInsByStore = new Map();
 
@@ -39,6 +40,17 @@ const MIME_BY_EXT = {
 };
 
 export const isGuestPanelId = (value) => typeof value === 'string' && PANEL_ID.test(value);
+
+/** Whether `relativePath`, already checked by the manifest parse, is a folder that stays inside the package. */
+const isGuestPackageFolder = async (packageRoot, relativePath) => {
+  try {
+    const rootReal = await fs.realpath(packageRoot);
+    const candidate = await fs.realpath(path.resolve(rootReal, relativePath));
+    return candidate.startsWith(rootReal + path.sep) && (await fs.stat(candidate)).isDirectory();
+  } catch {
+    return false;
+  }
+};
 
 export const resolveGuestAssetPath = async (packageRoot, relativePath) => {
   if (typeof relativePath !== 'string' || relativePath.includes('\0') || relativePath.includes('\\')) {
@@ -282,6 +294,18 @@ export const inspectGuestPackage = async (packageRoot, { openchamberVersion, ski
       return { ok: false, code: 'missing-build' };
     }
   }
+  const blocks = parsed.manifest.contributes.blocks ?? [];
+  for (const block of blocks) {
+    if (!await resolveGuestAssetPath(packageRoot, block.entry)) {
+      return { ok: false, code: 'invalid-manifest' };
+    }
+    if (!await guestBuiltScriptsReady(packageRoot, block.entry)) {
+      return { ok: false, code: 'missing-build' };
+    }
+  }
+  if (blocks.length > 0) {
+    guest.blocks = blocks.map((block) => ({ ...block, args: [...block.args] }));
+  }
   if (fileEditors.length > 0) {
     guest.fileEditors = fileEditors.map((editor) => ({ ...editor, match: [...editor.match] }));
   }
@@ -329,6 +353,34 @@ export const inspectGuestPackage = async (packageRoot, { openchamberVersion, ski
   if (parsed.manifest.contributes.tracker) {
     guest.tracker = parsed.manifest.contributes.tracker;
   }
+  // The usage provider a `quota` service provides; the parse requires it exactly then.
+  if (parsed.manifest.contributes.quota) {
+    guest.quota = parsed.manifest.contributes.quota;
+  }
+  // The service acts on sessions, adds to what agents read, or answers `@`; the parse requires a service with each.
+  if (parsed.manifest.contributes.sessionControl) {
+    guest.sessionControl = parsed.manifest.contributes.sessionControl;
+  }
+  if (parsed.manifest.contributes.instructions) {
+    guest.instructions = true;
+  }
+  if (parsed.manifest.contributes.mentions) {
+    guest.mentions = parsed.manifest.contributes.mentions;
+  }
+  // The package's skills folder; a declared folder that is not there fails the install.
+  if (parsed.manifest.contributes.skills) {
+    if (!await isGuestPackageFolder(packageRoot, parsed.manifest.contributes.skills)) {
+      return { ok: false, code: 'invalid-manifest' };
+    }
+    guest.skills = parsed.manifest.contributes.skills;
+  }
+  // The package's OpenCode plugin folder: a directory with a package.json naming an entry that exists, or the install fails.
+  if (parsed.manifest.contributes.opencodePlugin) {
+    if (!await resolveOpenCodePluginFolder(fs, packageRoot, parsed.manifest.contributes.opencodePlugin)) {
+      return { ok: false, code: 'invalid-opencode-plugin' };
+    }
+    guest.opencodePlugin = parsed.manifest.contributes.opencodePlugin;
+  }
   return { ok: true, guest };
 };
 
@@ -345,8 +397,26 @@ const withSource = (guest, source, displayPath) => ({
 
 /** Whether the package has any page the host loads: panel, background, status section, or file editor. */
 export const hasGuestFrame = (guest) => Boolean(
-  guest.entry || guest.backgroundEntry || guest.statusEntry || (Array.isArray(guest.fileEditors) && guest.fileEditors.length > 0),
+  guest.entry || guest.backgroundEntry || guest.statusEntry
+    || (Array.isArray(guest.fileEditors) && guest.fileEditors.length > 0)
+    || (Array.isArray(guest.blocks) && guest.blocks.length > 0),
 );
+
+/** What a running service asked its card to say; memory only, since it says so again when it next starts. */
+const configurationNotes = new Map();
+
+/**
+ * @param {string} guestId
+ * @param {string | null} message `null` clears it
+ * @returns {boolean} whether the card changed
+ */
+export const setGuestConfigurationNote = (guestId, message) => {
+  const previous = configurationNotes.get(guestId) ?? null;
+  if (previous === message) return false;
+  if (message === null) configurationNotes.delete(guestId);
+  else configurationNotes.set(guestId, message);
+  return true;
+};
 
 /** Catalog JSON. Drops packageRoot. Keeps attach only when true. `entry` is absent for a page-less guest. */
 export const toPublicGuest = (guest) => {
@@ -422,6 +492,9 @@ export const toPublicGuest = (guest) => {
   if (Array.isArray(guest.commands) && guest.commands.length > 0) {
     row.commands = guest.commands.map((command) => ({ ...command }));
   }
+  if (Array.isArray(guest.blocks) && guest.blocks.length > 0) {
+    row.blocks = guest.blocks.map((block) => ({ ...block, args: [...block.args] }));
+  }
   if (Array.isArray(guest.fileEditors) && guest.fileEditors.length > 0) {
     row.fileEditors = guest.fileEditors.map((editor) => ({ ...editor, match: [...editor.match] }));
   }
@@ -459,6 +532,30 @@ export const toPublicGuest = (guest) => {
   // What the approval dialog and the tracker's account card name: the tracker, where its accounts live, how one signs in.
   if (guest.tracker) {
     row.tracker = toPublicTracker(guest.tracker);
+  }
+  // What the approval dialog names: the OpenCode providers whose credentials the usage provider receives.
+  if (guest.quota) {
+    row.quota = toPublicQuota(guest.quota);
+  }
+  // What the approval dialog and the requested list read.
+  if (guest.sessionControl) {
+    row.sessionControl = { content: guest.sessionControl.content === true };
+  }
+  if (guest.instructions) {
+    row.instructions = true;
+  }
+  if (guest.skills) {
+    row.skills = true;
+  }
+  if (guest.opencodePlugin) {
+    row.opencodePlugin = true;
+  }
+  if (guest.mentions) {
+    row.mentions = { label: guest.mentions.label };
+  }
+  const configurationNote = configurationNotes.get(guest.id);
+  if (configurationNote) {
+    row.needsConfiguration = configurationNote;
   }
   return row;
 };

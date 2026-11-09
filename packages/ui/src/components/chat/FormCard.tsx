@@ -13,7 +13,8 @@ import { useUIStore } from '@/stores/useUIStore';
 import { useChatSessionSelection } from './chatColumnSession';
 import { useSessions } from '@/sync/sync-context';
 import * as sessionActions from '@/sync/session-actions';
-import { isFormRequestNotFoundError } from '@/sync/form-request-error';
+import { agentUnavailableFrom, isFormRequestNotFoundError } from '@/sync/form-request-error';
+import { HoverTooltip } from '@/components/ui/row-tooltip';
 import { useI18n } from '@/lib/i18n';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { serializeFormAnswerAsMarkdown, serializeFormAsJson, serializeFormAsMarkdown } from './formSerializers';
@@ -136,6 +137,11 @@ const GenericFormCard: React.FC<FormCardProps> = ({ form, recovered }) => {
                 setHasResponded(true);
                 return;
             }
+            const unavailableAgent = agentUnavailableFrom(error instanceof Error ? error : null);
+            if (unavailableAgent) {
+                toast.error(t('chat.chatInput.toast.agentUnavailable', { agent: unavailableAgent }));
+                return;
+            }
             toast.error(t('chat.formCard.submitFailed'), { description: t('chat.formCard.tryAgain') });
         } finally {
             respondingRef.current = false;
@@ -212,7 +218,7 @@ const GenericFormCard: React.FC<FormCardProps> = ({ form, recovered }) => {
                     <div className="px-2 py-1.5 border-b border-edge-muted">
                         <div className="flex items-center gap-2">
                             <Icon name="question" className="h-3.5 w-3.5 text-primary" />
-                            <span className="typography-meta font-medium text-foreground">
+                            <span dir="auto" className="typography-meta font-medium text-foreground">
                                 {form.title?.trim() || t('chat.formCard.inputNeeded')}
                             </span>
                             {isFromSubagent ? (
@@ -221,24 +227,26 @@ const GenericFormCard: React.FC<FormCardProps> = ({ form, recovered }) => {
                                 </span>
                             ) : null}
                             <div className="ms-auto flex items-center gap-0.5">
-                                <button
-                                    type="button"
-                                    onClick={() => void handleCopy('markdown')}
-                                    title={t('chat.questionCard.copyMarkdown')}
-                                    aria-label={t('chat.questionCard.copyMarkdown')}
-                                    className="rounded p-1 text-muted-foreground transition-colors hover:bg-interactive-hover/30 hover:text-foreground"
-                                >
-                                    <Icon name="file-text" className="h-3 w-3" />
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => void handleCopy('json')}
-                                    title={t('chat.questionCard.copyJson')}
-                                    aria-label={t('chat.questionCard.copyJson')}
-                                    className="rounded p-1 text-muted-foreground transition-colors hover:bg-interactive-hover/30 hover:text-foreground"
-                                >
-                                    <Icon name="code" className="h-3 w-3" />
-                                </button>
+                                <HoverTooltip label={t('chat.questionCard.copyMarkdown')}>
+                                    <button
+                                        type="button"
+                                        onClick={() => void handleCopy('markdown')}
+                                        aria-label={t('chat.questionCard.copyMarkdown')}
+                                        className="rounded p-1 text-muted-foreground transition-colors hover:bg-interactive-hover/30 hover:text-foreground"
+                                    >
+                                        <Icon name="file-text" className="h-3 w-3" />
+                                    </button>
+                                </HoverTooltip>
+                                <HoverTooltip label={t('chat.questionCard.copyJson')}>
+                                    <button
+                                        type="button"
+                                        onClick={() => void handleCopy('json')}
+                                        aria-label={t('chat.questionCard.copyJson')}
+                                        className="rounded p-1 text-muted-foreground transition-colors hover:bg-interactive-hover/30 hover:text-foreground"
+                                    >
+                                        <Icon name="code" className="h-3 w-3" />
+                                    </button>
+                                </HoverTooltip>
                             </div>
                         </div>
                     </div>

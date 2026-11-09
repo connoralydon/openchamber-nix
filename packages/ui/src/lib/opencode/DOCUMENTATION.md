@@ -22,9 +22,21 @@ to the shared UI domain model. Sync owns transcript membership and store writes.
   Sync also passes the agent when the session already sits on one the folder's
   loaded catalog lacks, so that session gets the same check.
   An agent missing from it throws `AgentUnavailableError` before any switch,
-  the model included. A failed or empty list lets the switch through.
+  the model included. A failed or empty list lets the switch through. The class
+  lives in `agent-unavailable-error.ts`, so code that only reads the error does
+  not load the client.
 
 ## Decisions
+
+### Why fresh provider reads wait for post-call requests
+
+Provider, model and default-model reads share one catalog promise per directory
+on the active SDK instance. `fresh` waits for any request started before the
+call, including another fresh request. Callers waiting on the same read share
+the replacement started afterward. Joining an earlier fresh request lost a
+second catalog change arriving during that request. Catalog invalidations
+coalesce by resource revision above this adapter. Reconnect clears the request map;
+obsolete completions cannot remove the replacement runtime's entries.
 
 ### Why a missing agent stops the send instead of being skipped
 

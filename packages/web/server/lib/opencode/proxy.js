@@ -6,6 +6,7 @@ import { createProxyMiddleware } from 'http-proxy-middleware';
 
 import {
   applyForwardProxyResponseHeaders,
+  BROWSER_FETCH_METADATA_HEADERS,
   collectForwardProxyHeaders,
   shouldForwardProxyResponseHeader,
 } from '../../proxy-headers.js';
@@ -213,7 +214,7 @@ const directoriesAsOpenCodeReadsThem = (req, url) => {
       try {
         directory = decodeURIComponent(header);
       } catch {
-        // OpenCode rejects a malformed value; nothing to match.
+        // OpenCode falls back to the raw header if decoding fails.
       }
     }
     directories.push(directory);
@@ -232,9 +233,16 @@ export const normalizeForwardedDirectoryHeaders = (headers) => {
   }
 
   try {
-    headers['x-opencode-directory'] = decodeURIComponent(rawDirectory);
+    const decodedDirectory = decodeURIComponent(rawDirectory);
+    try {
+      http.validateHeaderValue('x-opencode-directory', decodedDirectory);
+    } catch {
+      // OpenCode can decode this value, but Node cannot carry it as a raw header.
+      return headers;
+    }
+    headers['x-opencode-directory'] = decodedDirectory;
   } catch {
-    // Leave malformed values untouched; upstream will reject invalid paths.
+    // OpenCode falls back to the raw value when URI decoding fails.
   }
   delete headers['x-opencode-directory-encoding'];
   return headers;
@@ -414,6 +422,8 @@ export const registerOpenCodeProxy = (app, deps) => {
     // The folder trust check (`../opencode-trust`): requests for a folder
     // whose configuration runs code wait for the user's trust.
     openCodeTrust = null,
+    // MCP OAuth from a browser on another machine (`mcp-oauth.js`).
+    mcpOAuthSignIn = null,
   } = deps;
 
   /**
@@ -527,6 +537,10 @@ export const registerOpenCodeProxy = (app, deps) => {
     console.log('Setting up OpenCode API gate (OpenCode not started yet)');
   }
   app.set('opencodeProxyConfigured', true);
+
+  // The provider's redirect carries no session and names no folder, so it goes
+  // ahead of the gates below; the attempt it belongs to already passed them.
+  mcpOAuthSignIn?.registerCallbackRoute(app);
 
   // Registered ahead of the readiness hold: the trust answer is OpenChamber's
   // own and needs no running OpenCode.
@@ -1112,9 +1126,7 @@ export const registerOpenCodeProxy = (app, deps) => {
    * cannot be read.
    */
   const checkoutGateFolders = async (req, res, url) => {
-    const folders = [];
-    const named = url.searchParams.get('directory') || req.get('x-opencode-directory');
-    if (named) folders.push(named);
+    const folders = directoriesAsOpenCodeReadsThem(req, url).filter(Boolean);
     const movedSessionID = sessionMoveOf(req.method, new URL(req.originalUrl || req.url, 'http://localhost').pathname);
     if (!movedSessionID) return { folders };
     let source;
@@ -1325,21 +1337,13 @@ export const registerOpenCodeProxy = (app, deps) => {
           proxyReq.setHeader('Authorization', authHeaders.Authorization);
         }
 
-        if (req.headers?.['x-opencode-directory-encoding'] === 'uri') {
-          const rawDirectory = req.headers['x-opencode-directory'];
-          if (typeof rawDirectory === 'string') {
-            try {
-              proxyReq.setHeader('x-opencode-directory', decodeURIComponent(rawDirectory));
-            } catch {
-              proxyReq.setHeader('x-opencode-directory', rawDirectory);
-            }
-          }
-          proxyReq.removeHeader?.('x-opencode-directory-encoding');
-        }
-
         // Defensive: request identity encoding from upstream OpenCode.
         // This avoids compressed-body/header mismatches in multi-proxy setups.
         proxyReq.setHeader('accept-encoding', 'identity');
+
+        // Same reason as collectForwardProxyHeaders: OpenCode refuses requests
+        // a packaged client's browser marks cross-site.
+        for (const name of BROWSER_FETCH_METADATA_HEADERS) proxyReq.removeHeader(name);
 
         replayParsedBody(proxyReq, req);
       },
@@ -1388,6 +1392,7 @@ export const registerOpenCodeProxy = (app, deps) => {
   });
 
   app.use('/api', applyProxyResponseDeadline);
+  mcpOAuthSignIn?.registerStartRoutes(app, { readBody });
   // v1's interactive provider/MCP OAuth callbacks are gone: v2 runs provider
   // connection through `/api/integration/*`, which answers immediately and
   // needs no special deadline.

@@ -50,6 +50,23 @@ edge, or past it, the editor scrolls and the range follows. The click that
 ends a drag lands on whatever the pointer ended over, so each view's
 click-outside handler skips it (`isDragReleaseClick`) and the range stays.
 
+### Why a comment's annotation keeps one DOM node
+
+Pierre keys its annotation wrappers by index in the list, so an annotation that comes or goes rebuilds every one after it. A card is portalled into its annotation's node, so a new node would unmount the card and drop its height for a frame, which moves the diff and the scroll. `renderAnnotation` hands back the same node per annotation id, and the open comment field goes last in the list, so opening or closing it shifts nothing.
+
+### Why Pierre owns diff line-number selection
+
+`PierreDiffViewer` receives number-column selections through Pierre's
+`onLineSelected`, including clearing a single line, Shift+click ranges and
+touch taps. A separate click listener would run after Pierre's pointerup,
+reopen a cleared comment editor and replace a range with the clicked line.
+Pierre toggles a single selection by number without checking its side. A
+capture-phase pointerdown clears that selection before a same-number press
+on the other side, so Pierre starts a normal selection there. Shift+press
+and unfinished comments keep their existing paths.
+The gutter "+" keeps its own `onGutterUtilityClick` path. An unfinished
+comment still prevents an accidental deselection from closing its editor.
+
 ### Why the window follows the drag and not the gutter
 
 The gutter only sees the pointer while it is over the line-number column,
@@ -136,7 +153,9 @@ only the note for such a row.
 Git, Changes, Walkthrough, pull requests and mobile Changes use the shared
 repository picker. Selection, discovery refresh and persistence belong to
 [`useGitStore`](../../stores/DOCUMENTATION.md#usegitstorets) and
-`useNestedGitDirectory`; diff rows do not change that selection.
+`useNestedGitDirectory`; diff rows do not change that selection. A changed-file
+chip falling back to Changed does (*Last turn scope*), since the chip names a
+file and only its own repository can show it.
 
 ## Find in changes
 
@@ -223,6 +242,15 @@ one attribute per moved
 control; the menu reads them when it opens and shows a check beside each view
 option that is on.
 
+### Why the changes list shares one tooltip and not a Tooltip per button
+
+The changes list is not virtualized below 1000 rows and keeps its stage,
+unstage and folder buttons mounted, so a Tooltip per button would mount
+thousands of them. `DelegatedTooltip` (`ui/row-tooltip.tsx`) listens on the
+list and shows the `data-row-tooltip` label of the button under the pointer.
+Its state stays in its own component because a re-render of `ChangesPanel`
+re-renders every row.
+
 ## Files toolbar
 
 The Files editor's row (`renderFileToolbar`, an `ActionToolbar`) has the actions
@@ -285,6 +313,51 @@ unmirrored arrow up inside the LTR block.
 ### Why a bounded flex body and not percentage max-height alone
 
 A percentage max-height inside auto-height wrappers let the inner viewport grow to the entire virtual list. The Files pane then scrolled outside the virtualizer, which mounted every row and froze the renderer on large JSON. The flex layout keeps the virtualizer's viewport bounded without changing file limits, preview preferences or saved tabs.
+
+## Last turn scope
+
+`useLastTurnDiff` reads the last turn's per-file diff from OpenCode
+(`GET /api/session/:id/diff`), which compares the turn's first and last step
+snapshots. The answer moves when a step is added, when the newest step finishes
+(its end snapshot is recorded then) and when the session goes idle, so those
+three key the refetch. The desktop Diff view reads it in every scope while
+shown, so the scope picker's Last turn count is current before the user picks
+it; mobile Changes has no counts and reads it only in that scope. Outside the
+scope a running turn is not read, and its count shows as unknown until the
+turn ends. A failed read keeps its own error and retry, and another session's
+turn never shows while this one's loads.
+
+A changed-file chip under a reply opens Last turn, but the chip comes from the
+turn's tool calls and the scope from its snapshots, so they can disagree:
+snapshots are off, the project folder is no git repository (a repository nested
+in it still gets the edits), or a step took no snapshot. Each click therefore
+asks once (`pendingTurnDiffFile`, dropped when another session is on screen)
+whether the file is in the turn's diff. Until the list answers the session's
+current state the view shows loading; a failed read keeps its error and retry.
+A file that is there is expanded and scrolled to, on every click, since the
+chip's absolute path only matches the relative list through this request.
+A file that is not there opens Changed instead, in the repository holding the
+file, read afresh, expanded. A repository the picker drops again ends the
+attempt on the repository left on screen. Picking Last turn by hand asks
+nothing and stays there, empty or not. The phone's Changes surface
+(`apps/MobileChangesSurface.tsx`) answers the same way and opens the file's own
+diff screen, since it has no expanded list to scroll. VS Code has no Diff view
+panel: the chip reads the turn's diff once and opens the file's patch in the
+editor's own diff (`editor.openDiff` with `patch`; a file the turn deleted shows
+its old content against an empty side). A file the list does not hold opens as
+it is, and a failed read shows an error toast.
+
+### Why the click is a one-shot request and not derived from the tab
+
+A tab keeps its target across scope changes, so a tab opened from a chip and a
+tab where the person picked Last turn by hand look the same. Deriving the
+fallback from the tab would send that person back to Changed every time.
+
+### Why the count waits for the turn to end outside the scope
+
+A read of a running step makes OpenCode capture a fresh working-copy snapshot.
+Reading on every step only to keep a count current would cost one capture per
+step of every turn while the panel is open on another scope.
 
 ## Pull request comparisons
 
@@ -498,3 +571,16 @@ browser WebSocket also never sees the upgrade's 401 or 403, so a refused token
 cannot be told apart from a server that is down. Five attempts span a typical
 server restart, so a short outage shows nothing, and an outage that lasts shows
 the error while the retry goes on underneath.
+
+## Office documents in a diff
+
+`getFileDiff` and `getCommitFileDiff` return docx, xlsx, pptx, odt, ods and odp as
+two data URLs, the way images travel, because a text patch of a zip says nothing.
+`OfficeDocumentDiff` reads them in the app: a workbook lists changed cells, a
+text document goes through the regular viewer as its extracted text, so comments
+work there, and layout changes do not show. Branch and pull request comparisons
+ask for the two versions apart from their patches: `useGitComparison.fetchVersions`
+reads them from `GET /api/git/range-file-versions` or from the change request
+route with `binary=true`. A provider that ignores the flag, as an extension
+provider may, answers text that is no data URL, and the diff keeps the binary
+placeholder.

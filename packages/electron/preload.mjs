@@ -67,6 +67,12 @@ if (clientToken && isLocalPage) {
   contextBridge.exposeInMainWorld('__OPENCHAMBER_CLIENT_TOKEN__', clientToken);
 }
 
+// A window created before startup resolved has none of the values above in its
+// arguments, so the packaged document asks main for them (packaged-runtime-config.mjs).
+if (currentOrigin === 'openchamber-ui://app') {
+  contextBridge.exposeInMainWorld('__OPENCHAMBER_READ_RUNTIME_CONFIG__', () => ipcRenderer.sendSync('openchamber:read-runtime-config'));
+}
+
 // Which saved host this window should connect to over the relay-capable path
 // (direct probe first, E2EE tunnel fallback). Local pages only — the id is
 // only useful together with the desktop IPC channel anyway.
@@ -86,7 +92,10 @@ if (readArgValue('--openchamber-explicit-runtime') === '1') {
 if (runtimeHeadersRaw && isLocalPage) {
   try {
     const runtimeHeaders = JSON.parse(runtimeHeadersRaw);
-    if (runtimeHeaders && typeof runtimeHeaders === 'object') {
+    // An exposed global is read-only. A window created before startup resolved
+    // carries no headers, and exposing that empty set would keep the packaged
+    // document from receiving the startup host's headers.
+    if (runtimeHeaders && typeof runtimeHeaders === 'object' && Object.keys(runtimeHeaders).length > 0) {
       contextBridge.exposeInMainWorld('__OPENCHAMBER_RUNTIME_HEADERS__', runtimeHeaders);
     }
   } catch {

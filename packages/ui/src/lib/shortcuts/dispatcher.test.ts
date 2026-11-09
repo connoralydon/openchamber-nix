@@ -44,6 +44,18 @@ describe('ShortcutDispatcher', () => {
     expect(calls).toBe(2);
   });
 
+  test('tries the next variant handler before input when the first handler declines', () => {
+    const registry = new ShortcutRegistry();
+    const calls: string[] = [];
+    registry.register('cycle_thinking_variant', () => { calls.push('main'); return false; });
+    registry.register('cycle_thinking_variant', () => { calls.push('btw'); });
+    registry.register('cycle_thinking_variant', () => { calls.push('inactive'); });
+    const dispatcher = new ShortcutDispatcher({ registry, getBinding: () => 'ctrl+t' });
+
+    expect(dispatcher.dispatchBeforeInput('cycle_thinking_variant', key('t', { ctrlKey: true }))).toBe(true);
+    expect(calls).toEqual(['main', 'btw']);
+  });
+
   test('leaves two-chord variant bindings for normal sequence dispatch', () => {
     const registry = new ShortcutRegistry();
     let calls = 0;
@@ -73,6 +85,24 @@ describe('ShortcutDispatcher', () => {
 
     unregister();
     expect(dispatcher.dispatch(key('g'))).toBe(false);
+  });
+
+  test('completes a sequence while the leader modifier stays held', () => {
+    const registry = new ShortcutRegistry();
+    const calls: string[] = [];
+    registry.register('toggle_source_board', () => { calls.push('sequence'); });
+    registry.register('toggle_sidebar', () => { calls.push('single'); });
+    const dispatcher = new ShortcutDispatcher({
+      registry,
+      getBinding: (id) => id === 'toggle_source_board' ? 'ctrl+k b' : 'ctrl+b',
+    });
+
+    expect(dispatcher.dispatch(key('k', { ctrlKey: true }))).toBe(true);
+    expect(dispatcher.dispatch(key('b', { ctrlKey: true }))).toBe(true);
+    expect(calls).toEqual(['sequence']);
+
+    expect(dispatcher.dispatch(key('b', { ctrlKey: true }))).toBe(true);
+    expect(calls).toEqual(['sequence', 'single']);
   });
 
   test('re-matches a prefix mismatch and clears on escape or blur', () => {

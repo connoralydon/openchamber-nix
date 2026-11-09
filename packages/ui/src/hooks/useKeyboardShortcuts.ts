@@ -146,6 +146,9 @@ export const useKeyboardShortcuts = () => {
 
   useKeybinds({
     open_command_palette: () => {
+      // The palette renders only in the MainLayout (web and desktop); in VS Code
+      // this keystroke is Quick Open.
+      if (isVSCodeRuntime()) return false;
       useUIStore.getState().toggleCommandPalette();
     },
     search_prompt_history: (event) => dispatchPromptHistorySearch(event),
@@ -286,11 +289,14 @@ export const useKeyboardShortcuts = () => {
       state.addRecentAgent(next);
     },
     toggle_terminal: () => {
-      if (useUIStore.getState().isMobile) return false;
+      // Desktop and web only: no terminal surface renders in VS Code, where
+      // this keystroke toggles the bottom panel.
+      if (useUIStore.getState().isMobile || isVSCodeRuntime()) return false;
       return toggleTerminalSurface();
     },
     toggle_context_panel_expanded: () => {
-      if (useUIStore.getState().isMobile || !currentDirectory) return false;
+      // No ContextPanel renders in VS Code, so the store change would be invisible.
+      if (useUIStore.getState().isMobile || isVSCodeRuntime() || !currentDirectory) return false;
       toggleExpandedContextZone(currentDirectory);
     },
     open_model_selector: () => {
@@ -365,6 +371,8 @@ export const useKeyboardShortcuts = () => {
     if (!next) return false;
     config.setProvider(next.providerID);
     config.setModel(next.modelID);
+    const sessionId = useSessionUIStore.getState().currentSessionId;
+    if (sessionId) useSelectionStore.getState().pickSessionModel(sessionId, next.providerID, next.modelID);
     state.addRecentModel(next.providerID, next.modelID);
     state.setLastSelectedModel(next.providerID, next.modelID);
   }

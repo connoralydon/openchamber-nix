@@ -129,6 +129,8 @@ export const RENDER_PAGE_CLOSED_IN_CHAT_NOTE = "The user did not answer on the p
 
 const UI_NOT_DRAWN_NOTE = "The chat could not draw this ui, so the user saw its source instead of fields. Fix the program from the errors below and call again.";
 
+const DECLINED_NOTE = "The user declined to answer on the page. Don't choose for them and don't ask the same question again. Stop here: say in one short line that you left it, and wait for their next message.";
+
 const CHAT_SENT_EARLIER_NOTE = "The page did not wait: the user had already written in the chat before it appeared, and that message follows this result. They wrote it without seeing the page, so it is not an answer to it. Continue from that message; show the page again only if it still fits.";
 
 const pageKey = (sessionId, callId) => `${sessionId}\u0000${callId}`;
@@ -137,8 +139,9 @@ const pageKey = (sessionId, callId) => `${sessionId}\u0000${callId}`;
  * Pages that wait for the user's answer, keyed by session and tool call. The
  * call's request stays open while its page waits: an answer resolves it, and an
  * aborted request (the user stopped the turn, wrote in the chat, or OpenCode
- * went away) drops it. Nothing is kept once a call ends, so a page answers at
- * most once and a stale answer finds nothing to resolve.
+ * went away) drops it, and so does the end of the session's turn (`release`).
+ * Nothing is kept once a call ends, so a page answers at most once and a stale
+ * answer finds nothing to resolve.
  *
  * `onWaitChange` hears when a page starts and stops waiting, so the server can
  * show the session as waiting for the user the way it does for a form.
@@ -166,8 +169,7 @@ export const createPageAnswers = ({ onWaitChange = () => {} } = {}) => {
       return;
     }
     const onAbort = () => {
-      waiting.delete(key);
-      announce({ type: 'settled', sessionId, callId });
+      if (waiting.delete(key)) announce({ type: 'settled', sessionId, callId });
       reject(new OpenChamberControlError('The page stopped waiting before the user answered', 499));
     };
     signal?.addEventListener('abort', onAbort, { once: true });
@@ -197,6 +199,15 @@ export const createPageAnswers = ({ onWaitChange = () => {} } = {}) => {
       resolveNotDrawn({ answered: false, reason: 'ui-not-drawn', errors });
       return { answered: false };
     }
+    // The user declined: the call ends without an answer they did not mean.
+    if (input.declined === true) {
+      const resolveDeclined = waiting.get(pageKey(sessionId, callId));
+      if (!resolveDeclined) {
+        throw new OpenChamberControlError('This page is no longer waiting for an answer', 404);
+      }
+      resolveDeclined({ answered: false, reason: 'declined' });
+      return { answered: false };
+    }
     const summary = isString(input.summary) ? input.summary.trim() : '';
     if (!summary) {
       throw new OpenChamberControlError('summary is required: what the user chose, in a few words', 400);
@@ -217,7 +228,21 @@ export const createPageAnswers = ({ onWaitChange = () => {} } = {}) => {
     return { answered: true };
   };
 
-  return { wait, answer };
+  /**
+   * The session's turn ended, so these pages wait for nobody. In one OpenCode
+   * no call outlives its turn; this finds a call a second OpenCode on the same
+   * database runs (see DOCUMENTATION.md). Its request stays open on purpose:
+   * ending it would wake that OpenCode's turn beside the one the user is in.
+   */
+  const release = (sessionId) => {
+    for (const key of waiting.keys()) {
+      if (!key.startsWith(pageKey(sessionId, ''))) continue;
+      waiting.delete(key);
+      announce({ type: 'settled', sessionId, callId: key.slice(pageKey(sessionId, '').length) });
+    }
+  };
+
+  return { wait, answer, release };
 };
 
 /**
@@ -274,6 +299,9 @@ export const createRenderPageAction = ({ isEnabled, pageAnswers, hasUnreadChat }
   const answer = await pageAnswers.wait({ sessionId, callId, title, directory, signal });
   if (answer.reason === 'ui-not-drawn') {
     return { title, answer: { answered: false, reason: 'ui-not-drawn' }, note: [UI_NOT_DRAWN_NOTE, ...answer.errors].join('\n') };
+  }
+  if (answer.reason === 'declined') {
+    return { title, answer, note: DECLINED_NOTE };
   }
   return withHidden({ title, answer }, ANSWERED_NOTE);
 };

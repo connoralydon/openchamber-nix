@@ -126,11 +126,14 @@ const { useConfigStore } = await import('@/stores/useConfigStore');
 const { useSessionUIStore } = await import('@/sync/session-ui-store');
 const { useSelectionStore } = await import('@/sync/selection-store');
 const { useInputStore } = await import('@/sync/input-store');
+const { useUIStore } = await import('@/stores/useUIStore');
+const { shortcutRegistry } = await import('@/lib/shortcuts');
 const { getSyncChildStores } = await import('@/sync/sync-refs');
 const { useMessageQueueStore, createMessageQueueTarget, getMessageQueueKey } = await import('@/stores/messageQueueStore');
 const { opencodeClient } = await import('@/lib/opencode/client');
 const { useProjectsStore } = await import('@/stores/useProjectsStore');
 const { OpenCode } = await import('@opencode/client');
+const { getRuntimeApiBaseUrl, getRuntimeKey, switchRuntimeEndpoint } = await import('@/lib/runtime-switch');
 
 const sdk = OpenCode.make({
   baseUrl: 'https://sync.test',
@@ -312,17 +315,54 @@ for (const queue of [false, true]) {
     // Capture the queue payload without writing to the running server.
     const add = spyOn(useMessageQueueStore.getState(), 'addToQueue').mockResolvedValue(undefined);
     try {
-      await submitInComposer('Read @src/a.ts', { attachment: selection, queue });
+      await submitInComposer('Read @src/a.ts', { attachment: selection, queue }, undefined, () => {
+        if (queue) useSelectionStore.getState().pickSessionModel('ses_feature', 'provider', 'model');
+      });
       const attachments = queue ? add.mock.calls[0]?.[1].attachments : sent[0]?.attachments;
       expect(queue ? add.mock.calls.length : sent.length).toBe(1);
       expect(attachments).toHaveLength(2);
       expect(attachments?.[0]).toEqual(selection);
       expect(attachments?.[1]?.serverPath).toBe(path);
       expect(attachments?.[1]?.dataUrl).toBe(`file://${path}`);
-      if (queue) expect(sent).toEqual([]);
+      if (queue) {
+        expect(sent).toEqual([]);
+        expect(useSelectionStore.getState().getSessionModelPick('ses_feature')).toBeNull();
+      }
     } finally {
       add.mockRestore();
       listing.mockRestore();
+    }
+  });
+}
+
+for (const outcome of ['runtime switch', 'newer pick', 'failure']) {
+  test(`queue acceptance keeps model intent scoped through ${outcome}`, async () => {
+    const apiBaseUrl = getRuntimeApiBaseUrl();
+    const runtimeKey = getRuntimeKey();
+    const selection = useSelectionStore.getState();
+    const add = spyOn(useMessageQueueStore.getState(), 'addToQueue').mockImplementation(async () => {
+      if (outcome === 'failure') throw new Error('queue refused');
+      if (outcome === 'runtime switch') {
+        switchRuntimeEndpoint({ apiBaseUrl: 'https://queue-other.test', runtimeKey: 'queue-other' });
+      }
+      selection.pickSessionModel('ses_feature', 'provider', 'model');
+    });
+    try {
+      const attachment: AttachedFile = {
+        id: 'queue-context', file: new File(['context'], 'context.txt', { type: 'text/plain' }),
+        filename: 'context.txt', mimeType: 'text/plain', size: 7, dataUrl: 'data:text/plain;base64,Y29udGV4dA==', source: 'local',
+      };
+      await submitInComposer('Queued prompt', { attachment, queue: true }, undefined, () => {
+        selection.pickSessionModel('ses_feature', 'provider', 'model');
+      });
+      expect(add.mock.calls).toHaveLength(1);
+      expect(selection.getSessionModelPick('ses_feature')).toEqual({ providerId: 'provider', modelId: 'model' });
+      switchRuntimeEndpoint({ apiBaseUrl, runtimeKey });
+      expect(selection.getSessionModelPick('ses_feature')).toEqual(outcome === 'runtime switch'
+        ? null : { providerId: 'provider', modelId: 'model' });
+    } finally {
+      add.mockRestore();
+      switchRuntimeEndpoint({ apiBaseUrl, runtimeKey });
     }
   });
 }
@@ -379,6 +419,34 @@ const setupBtwCompaction = () => {
     request: { settings: {}, headers: {}, body: {} }, permissions: [],
   }] });
 };
+
+test('the BTW favorite-model shortcut leaves the pick a form reply applies', async () => {
+  const favorites = [{ providerID: 'btw-provider', modelID: 'btw-model' }, { providerID: 'btw-provider', modelID: 'next-model' }];
+  const previousFavorites = useUIStore.getState().favoriteModels;
+  const providers = [{
+    id: 'btw-provider', name: 'BTW', activation: 'enabled' as const, package: 'btw-provider',
+    models: favorites.map(({ providerID, modelID }) => ({
+      id: `${providerID}/${modelID}`, providerID, modelID, name: modelID, enabled: true, status: 'active' as const,
+      capabilities: { tools: true, input: ['text'], output: ['text'] },
+      variants: [], time: { released: 0 }, cost: [], limit: { context: 1, output: 1 },
+    })),
+  }];
+  try {
+    await submitInComposer('', undefined, () => {
+      setupBtwCompaction();
+      useUIStore.setState({ favoriteModels: favorites });
+      useConfigStore.setState({ providers });
+    }, () => {
+      expect(useSelectionStore.getState().getSessionModelPick('ses_btw')).toBeNull();
+      shortcutRegistry.get('cycle_favorite_model_forward')?.(new window.KeyboardEvent('keydown'));
+    });
+
+    expect(useSelectionStore.getState().getSessionModelPick('ses_btw')).toEqual({ providerId: 'btw-provider', modelId: 'next-model' });
+  } finally {
+    useUIStore.setState({ favoriteModels: previousFavorites });
+    useConfigStore.setState({ providers: [] });
+  }
+});
 
 for (const switchFails of [false, true]) {
   test(`BTW /compact keeps the main selection${switchFails ? ' and restores a failed command' : ''}`, async () => {

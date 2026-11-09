@@ -167,6 +167,7 @@ const sendPlainMessage = async (
   const resolved = modelContext ?? resolveModelContext(sessionID);
   if (!resolved) throw new Error('Select a model before sending review flow messages');
   const selection = useSelectionStore.getState();
+  const settleModelPick = selection.captureSessionModelPickSettlement(sessionID, resolved.providerID, resolved.modelID, runtimeKey);
   selection.saveSessionModelSelection(sessionID, resolved.providerID, resolved.modelID);
   if (resolved.agent) {
     selection.saveSessionAgentSelection(sessionID, resolved.agent);
@@ -187,7 +188,7 @@ const sendPlainMessage = async (
     directory,
     context,
     onOptimisticInsert: () => requestChatForceScrollBottom(sessionID),
-    send: async (messageID, context) => {
+    send: async (messageID, context, commitRevert) => {
       // Only a genuine change travels with the prompt; the review session was
       // created on this selection, so normally nothing is switched.
       const selection = await resolveSendSelection(sessionID, directory, resolved);
@@ -201,9 +202,11 @@ const sendPlainMessage = async (
         text,
         context,
         messageId: messageID,
+        commitRevert,
       }).then(() => undefined);
     },
   });
+  settleModelPick();
 };
 
 const requestChatForceScrollBottom = (sessionId: string): void => {

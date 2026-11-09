@@ -358,6 +358,7 @@ mock.module("../session-actions", () => ({
   shareSession: mock(async () => undefined),
   unshareSession: mock(async () => undefined),
   optimisticSend: mock(async () => undefined),
+  commitStagedRevert: mock(async () => undefined),
   refetchSessionMessages: mock(async () => undefined),
   revertToMessage: mock(async () => undefined),
   unrevertSession: mock(async () => undefined),
@@ -380,11 +381,13 @@ mock.module("@/lib/openchamberConfig", () => ({
 }))
 mock.module("@/lib/sharedTrustConfirmation", () => ({
   resolveWorktreeSetupCommands: async () => [],
+  resolveWorktreeTeardownCommands: async () => [],
 }))
 
 mock.module("@/lib/worktrees/worktreeBootstrap", () => ({
   waitForWorktreeBootstrap: async () => undefined,
   clearWorktreeBootstrapState: () => undefined,
+  getWorktreeBootstrapState: () => null,
   markWorktreeBootstrapPending: () => undefined,
   setWorktreeBootstrapState: () => undefined,
   startWorktreeBootstrapWatcher: () => undefined,
@@ -711,13 +714,14 @@ describe("issue 2039 draft auto-accept", () => {
     useSessionUIStore.getState().openNewSessionDraft()
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(activateDirectoryCalls).toEqual([null])
+    expect(activateDirectoryCalls).toEqual(["/home/test/.config/openchamber/chats"])
     expect(applyDefaultModelAgentSelectionCalls.at(-1)).toEqual({
       projectDefaultAgent: undefined,
       projectDefaultModel: undefined,
       projectDefaultVariant: undefined,
     })
   })
+
 
   test("restores project defaults when the next draft restores the previous project target", async () => {
     const project = {

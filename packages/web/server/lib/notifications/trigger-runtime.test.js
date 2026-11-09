@@ -187,14 +187,47 @@ describe('error notification on v2 step failures', () => {
 });
 
 describe('ready notification while background subagents run', () => {
-  const stubOpenCode = ({ active, children }) => {
+  // Without `jobs` it is an OpenCode before 2.2.6, which has no job list.
+  const stubOpenCode = ({ active, children, jobs }) => {
     vi.stubGlobal('fetch', vi.fn(async (input) => {
       const url = new URL(String(input));
+      if (url.pathname === '/api/experimental/job') {
+        return jobs ? Response.json({ data: jobs() }) : new Response(null, { status: 404 });
+      }
       if (url.pathname === '/api/session/active') return Response.json({ data: active() });
       if (url.pathname === '/api/session') return Response.json({ data: children, cursor: {} });
       return Response.json({});
     }));
   };
+
+  it('stays silent while the job list shows a subagent, and ignores a running command', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const job = (kind, sessionID) => ({ kind, sessionID, status: 'running', time: { started: 1 } });
+    let jobs = [job('subagent', 'ses_1'), job('shell', 'ses_child')];
+    stubOpenCode({ active: () => ({}), children: [], jobs: () => jobs });
+    const { runtime, emitDesktopNotification } = makeRuntime();
+
+    await runtime.maybeSendPushForTrigger(stepStarted('ses_1', 'msg_1'));
+    await runtime.maybeSendPushForTrigger(turnEnded('ses_1'));
+    expect(emitDesktopNotification).not.toHaveBeenCalled();
+
+    // A dev server the subagent left running must not hold "ready" forever.
+    jobs = [job('shell', 'ses_child')];
+    await runtime.maybeSendPushForTrigger(turnEnded('ses_1'));
+    expect(emitDesktopNotification).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  it('stays silent while a child session that is no OpenCode job runs', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    stubOpenCode({ active: () => ({ ses_workflow: { type: 'running' } }), children: [{ id: 'ses_workflow', parentID: 'ses_1' }], jobs: () => [] });
+    const { runtime, emitDesktopNotification } = makeRuntime();
+
+    await runtime.maybeSendPushForTrigger(stepStarted('ses_1', 'msg_1'));
+    await runtime.maybeSendPushForTrigger(turnEnded('ses_1'));
+    expect(emitDesktopNotification).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
 
   it('stays silent on the pause and announces the real turn end', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -505,6 +538,73 @@ describe('input-needed notification for an MCP elicitation', () => {
     const push = sendPushToAllUiSessions.mock.calls[0][0];
     expect(push.data.url).toBe('/');
     expect(push.data.sessionId).toBeUndefined();
+  });
+});
+
+describe('notification project through the trigger runtime', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('names the project of the session record, not the active project', async () => {
+    const settings = {
+      nativeNotificationsEnabled: true,
+      notificationMode: 'always',
+      notifyOnCompletion: true,
+      locale: 'en',
+      activeProjectId: 'project-a',
+      projects: [
+        { id: 'project-a', label: 'Project A', path: '/work/project-a' },
+        { id: 'project-b', label: 'Project B', path: '/work/project-b' },
+      ],
+      notificationTemplates: {
+        completion: { title: '{project_name} · {session_name}', message: '{last_message}' },
+      },
+    };
+    const readSettingsFromDisk = async () => settings;
+    vi.stubGlobal('fetch', vi.fn(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/api/session/active') return Response.json({ data: {} });
+      if (url.pathname === '/api/session') return Response.json({ data: [], cursor: {} });
+      if (url.pathname === '/api/session/ses_b') {
+        return Response.json({ data: { id: 'ses_b', title: 'Session B', parentID: null, location: { directory: '/work/project-b' } } });
+      }
+      return new Response(null, { status: 404 });
+    }));
+
+    const templates = createNotificationTemplateRuntime({
+      readSettingsFromDisk,
+      buildOpenCodeUrl: (fetchPath) => `http://opencode.test${fetchPath}`,
+      getOpenCodeAuthHeaders: () => ({}),
+      resolveGitBinaryForSpawn: () => 'git',
+    });
+    const emitDesktopNotification = vi.fn(() => true);
+    const runtime = createNotificationTriggerRuntime({
+      readSettingsFromDisk,
+      readSessionMetadata: async () => ({}),
+      prepareNotificationLastMessage: async ({ message }) => message,
+      buildTemplateVariables: templates.buildTemplateVariables,
+      extractLastMessageText: () => 'done',
+      fetchLastAssistantMessageText: async () => 'done',
+      resolveNotificationTemplate: templates.resolveNotificationTemplate,
+      shouldApplyResolvedTemplateMessage: templates.shouldApplyResolvedTemplateMessage,
+      emitDesktopNotification,
+      broadcastUiNotification: vi.fn(),
+      sendPushToAllUiSessions: vi.fn(async () => undefined),
+      sendApnsToAllUiSessions: vi.fn(async () => undefined),
+      isAnyInteractiveClientVisible: () => true,
+      buildOpenCodeUrl: (fetchPath) => `http://opencode.test${fetchPath}`,
+      getOpenCodeAuthHeaders: () => ({}),
+    });
+
+    await runtime.maybeSendPushForTrigger(stepStarted('ses_b', 'msg_b'));
+    await runtime.maybeSendPushForTrigger(turnEnded('ses_b'));
+
+    expect(emitDesktopNotification).toHaveBeenCalledTimes(1);
+    expect(emitDesktopNotification.mock.calls[0][0]).toMatchObject({
+      kind: 'ready',
+      title: 'Project B · Session B',
+    });
   });
 });
 

@@ -1,4 +1,5 @@
 import {
+  eventMatchesHeldSequenceKey,
   eventMatchesShortcut,
   normalizeCombo,
   parseShortcut,
@@ -86,10 +87,8 @@ export class ShortcutDispatcher {
     if (event.repeat || isIMECompositionEvent(event) || this.hasActivePrefix() || this.options.registry.isSuspended()) {
       return false;
     }
-    const handler = this.options.registry.get(actionId);
-    return Boolean(handler
-      && eventMatchesShortcut(event, this.options.getBinding(actionId))
-      && handler(event) !== false);
+    if (!eventMatchesShortcut(event, this.options.getBinding(actionId))) return false;
+    return this.options.registry.getAll(actionId).some((handler) => handler(event) !== false);
   }
 
   clear(): void {
@@ -154,11 +153,10 @@ export class ShortcutDispatcher {
   }
 
   private getPrefixMatches(matches: BindingMatch[], event: KeyboardEvent): BindingMatch[] {
-    return matches.filter((match) => (
-      match.chords.length === 2
-      && match.chords[0] === this.prefix
-      && eventMatchesShortcut(event, match.chords[1])
-    ));
+    const sequences = matches.filter((match) => match.chords.length === 2 && match.chords[0] === this.prefix);
+    const exact = sequences.filter((match) => eventMatchesShortcut(event, match.chords[1]));
+    if (exact.length > 0) return exact;
+    return sequences.filter((match) => eventMatchesHeldSequenceKey(event, match.chords[0], match.chords[1]));
   }
 
   private getMatches(): BindingMatch[] {

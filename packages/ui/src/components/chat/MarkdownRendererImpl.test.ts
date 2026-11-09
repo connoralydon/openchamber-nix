@@ -162,7 +162,7 @@ test('on the phone a file link also opens the files drawer (#5486)', async () =>
   const open = spyOn(state, 'openContextFile');
   const { DedicatedMobileAppProvider } = await import('@/apps/mobileAppContext');
   let filesOpened = 0;
-  const actions = { openChanges: () => undefined, openFiles: () => { filesOpened += 1; }, openSourceBoard: () => undefined };
+  const actions = { openChanges: () => undefined, openFiles: () => { filesOpened += 1; }, openSourceBoard: () => undefined, openPlan: () => undefined };
   try {
     const content = React.createElement(Renderer.MarkdownContent, { content: '[View README.md](README.md)', directory: '/project', enableFileReferences: true, settled: true });
     await act(() => root.render(React.createElement(I18nProvider, null, React.createElement(DedicatedMobileAppProvider, { actions, children: content }))));
@@ -235,6 +235,16 @@ test('links keep the old renderer behaviour: inert when unsafe, bare URLs LTR, f
   footnote?.dispatchEvent(click);
   expect(click.defaultPrevented).toBe(true);
   expect(openedLinks).toEqual([]);
+});
+
+test('a bare link takes the same way as a named one', async () => {
+  openedLinks.length = 0;
+  const url = 'https://github.com/openchamber/openchamber/pull/6206';
+  await render(`${url} and [#6206](${url})`);
+  for (const anchor of host.querySelectorAll('a')) {
+    anchor.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  }
+  expect(openedLinks).toEqual([url, url]);
 });
 
 test('a code block without a language is labelled text', async () => {

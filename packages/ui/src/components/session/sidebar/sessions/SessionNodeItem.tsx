@@ -9,6 +9,7 @@ import { SessionActivityIndicator } from '@/components/session/SessionActivityIn
 import type { Session } from '@/lib/opencode/model';
 import { ContextMenu } from '@base-ui/react/context-menu';
 import { ContextMenu as ContextMenuRoot } from '@/components/ui/context-menu';
+import { openContextMenuFromKeyboard } from '@/components/ui/contextMenuKeyboard';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -38,6 +39,7 @@ import { useGuestActions } from '@/hooks/useGuestSurfaces';
 import { guestSessionActions, type GuestActionEntry } from '@/lib/guests/actions';
 import { runGuestSessionAction } from '@/lib/guests/session-action';
 import { SessionAiRenameMenuItem } from '@/components/session/SessionAiRenameMenuItem';
+import { MoveSessionDialog } from '@/components/session/MoveSessionDialog';
 import { handleSessionRenameKeyDown } from '@/components/session/sessionRenameKeyboard';
 import { useIsSessionAiRenamePending } from '@/sync/use-session-ai-rename';
 import { useSessionBlockingRequests } from '@/sync/sync-context';
@@ -46,6 +48,8 @@ import { useSessionHoverPrefetch } from '../list/useSessionPrefetch';
 import { getSyncSessionMaterializationStatus } from '@/sync/sync-refs';
 import { useViewportStore, viewportSessionKey } from '@/sync/viewport-store';
 import { DraggableSessionRow } from '../folders/sessionFolderDnd';
+import { requestNewFolder } from '../folders/newFolderRequest';
+import { getWorkFolderScope } from './sessionFolderIdentity';
 import { useSessionRowOrderRegistry } from './sessionRowOrder';
 import { canShowSessionWorktreeMenu, getSessionWorktreeMenuDisabled, nodeContainsSessionId, nodeHasPinnedMembershipChange, resolveTooltipBranchLabel, selectBlockingBadgeSessionScopes, type BlockingBadgeSessionScope } from './sessionNodeItemUtils';
 import { useSessionRowMenuState } from './useSessionRowMenuState';
@@ -79,7 +83,7 @@ import { isRowBoxClick } from './rowBoxClick';
 import { setSessionWorkState } from '@/sync/session-actions';
 import { useSessionWarmingStore, useSessionWarmUntil } from '@/stores/useSessionWarmingStore';
 import { isSpaceDirectory } from '@/lib/spaces/space-route';
-import { sessionGoalStatusColor, sessionGoalStatusLabelKey } from '@/lib/sessionGoalPresentation';
+import { sessionGoalMarkLabelKey, sessionGoalStatusColor } from '@/lib/sessionGoalPresentation';
 import { getChatsRootFromDirectory, isChatDirectoryPath } from '@/lib/chatDirectories';
 import { getMultiRunIdentity, sameMultiRunIdentity } from '@/lib/multirun/identity';
 import { ArrowsMerge } from '@/components/icons/ArrowsMerge';
@@ -374,9 +378,15 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
   // Hover-revealed actions besides the menu: work, quick archive, and in VS
   // Code open-in-editor.
   const extraHoverActions = (showWorkAction ? 1 : 0) + (showQuickArchiveAction ? 1 : 0) + (showOpenInEditorAction ? 1 : 0);
+  // With a mouse the row's menu is its right-click menu (Shift+F10 from the
+  // keyboard), so the ⋯ button shows on touch only: always in touch layouts,
+  // and on hover for a touch screen elsewhere (`pointer-fine:hidden`). Hover
+  // reserves are for a mouse, so they count it only where it always shows.
+  const showMenuButton = alwaysShowActions;
+  const hoverButtons = extraHoverActions + (showMenuButton ? 1 : 0);
   // VS Code reveals its permanent-size actions on hover, so the title makes
   // room for them there.
-  const vscodeAlwaysActionPaddingClass = ['group-hover:pe-8', 'group-hover:pe-14', 'group-hover:pe-18', 'group-hover:pe-22'][extraHoverActions];
+  const vscodeAlwaysActionPaddingClass = hoverButtons === 0 ? undefined : ['group-hover:pe-8', 'group-hover:pe-14', 'group-hover:pe-18', 'group-hover:pe-22'][hoverButtons - 1];
   const alwaysActionPaddingClass = showQuickArchiveAction ? 'pe-13' : 'pe-7';
   const [isTouchPressed, setIsTouchPressed] = React.useState(false);
   const editingIdRef = React.useRef(editingId);
@@ -532,6 +542,7 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
   const isAiRenaming = useIsSessionAiRenamePending(session.id, sessionDirectory);
   const isSessionActionPending = isMovingToWorktree || isAiRenaming;
   const currentWorktreeMetadata = node.worktree ?? useSessionUIStore.getState().getWorktreeMetadata(session.id) ?? null;
+  const [moveDialogOpen, setMoveDialogOpen] = React.useState(false);
   const [worktreeTargets, setWorktreeTargets] = React.useState<SessionWorktreeMenuTarget[]>([]);
   const [worktreeTargetsLoadFailed, setWorktreeTargetsLoadFailed] = React.useState(false);
   const worktreeSubmenuOpenRef = React.useRef(false);
@@ -576,8 +587,7 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
       toast.error(t('sessions.warming.toggleFailed'));
     }
   };
-  // SAFETY: sessionGoalStatusLabelKey contains an i18n key for every SessionGoalStatus.
-  const sessionGoalLabel = sessionGoal ? t(sessionGoalStatusLabelKey[sessionGoal.status] as never) : '';
+  const sessionGoalLabel = sessionGoal ? t(sessionGoalMarkLabelKey[sessionGoal.status]) : '';
   const sessionGoalGlyph = sessionGoal ? (
     <RowMarkTooltip label={sessionGoalLabel}>
       <span className="inline-flex flex-shrink-0 items-center" aria-label={sessionGoalLabel}>
@@ -930,19 +940,22 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
   // is how far the actions reach in from the row content's right edge: their
   // width less the 6px they sit nearer the row edge (16px buttons, 20px on
   // two-line timeline rows, 2px apart).
-  const actionsReserveClass = isTimelineRow && !isOneLineTimelineRow
-    ? ['[--oc-actions-reserve:0.875rem]', '[--oc-actions-reserve:2.25rem]', '[--oc-actions-reserve:3.625rem]', '[--oc-actions-reserve:5rem]'][extraHoverActions]
-    : ['[--oc-actions-reserve:0.625rem]', '[--oc-actions-reserve:1.75rem]', '[--oc-actions-reserve:2.875rem]', '[--oc-actions-reserve:4rem]'][extraHoverActions];
+  const actionsReserveClass = hoverButtons === 0
+    ? undefined
+    : isTimelineRow && !isOneLineTimelineRow
+      ? ['[--oc-actions-reserve:0.875rem]', '[--oc-actions-reserve:2.25rem]', '[--oc-actions-reserve:3.625rem]', '[--oc-actions-reserve:5rem]'][hoverButtons - 1]
+      : ['[--oc-actions-reserve:0.625rem]', '[--oc-actions-reserve:1.75rem]', '[--oc-actions-reserve:2.875rem]', '[--oc-actions-reserve:4rem]'][hoverButtons - 1];
   // An open row menu (dropdown or right-click) keeps the actions shown, so
-  // what they cover gives way too, hover or not.
-  const actionsMaskClass = alwaysShowActions
+  // what they cover gives way too, hover or not. A row with no hover actions
+  // covers nothing.
+  const actionsMaskClass = alwaysShowActions || hoverButtons === 0
     ? undefined
     : isSessionMenuOpen
       ? 'oc-actions-mask'
       : isVSCode
         ? 'group-hover:oc-actions-mask'
         : 'group-hover:oc-actions-mask group-has-[:focus-visible]:oc-actions-mask';
-  const coveredMetaFadeClass = isSessionMenuOpen ? 'opacity-0' : hideOnHoverClass;
+  const coveredMetaFadeClass = hoverButtons === 0 ? '' : isSessionMenuOpen ? 'opacity-0' : hideOnHoverClass;
   const pinnedLabel = t('sessions.sidebar.session.status.pinned');
   const pinnedMarkerContent = (
     <RowMarkTooltip label={pinnedLabel}>
@@ -1393,6 +1406,16 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
           </Sub>
         );
       })() : null}
+      {!isSubtaskSession && !archivedBucket && !isVSCode && sessionDirectory && !isSpaceDirectory(sessionDirectory) ? (
+        <SessionMenuItemHint hint={isStreaming ? t('sessions.sidebar.session.moveToWorktree.tooltipBusy') : t('sessions.moveSession.hint')}>
+          <span className="block">
+            <Item disabled={isStreaming || isMovingToWorktree} onClick={() => setMoveDialogOpen(true)} className="w-full [&>svg]:me-1">
+              <Icon name="folder-received" className="me-1 h-4 w-4" />
+              {t('sessions.moveSession.menu')}
+            </Item>
+          </span>
+        </SessionMenuItemHint>
+      ) : null}
       {multiRunKey ? (
         <SessionMenuItemHint hint={t('sessions.sidebar.session.menuHint.openRunOverview')}>
         <Item onClick={() => useUIStore.getState().setRunOverviewKey(multiRunKey)} className="[&>svg]:me-1">
@@ -1402,32 +1425,46 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
         </SessionMenuItemHint>
       ) : null}
 
-      {sessionDirectory && !archivedBucket && !isTimelineRow && hasFolderMutationAuthority ? (() => {
-        // Folders are flat per project: list folders from every scope of the
-        // owning project (root + all worktrees) so sessions can be filed
-        // across worktrees. Each action targets the folder's owning scope,
-        // and moving between scopes clears the previous membership first.
+      {sessionDirectory && !archivedBucket && hasFolderMutationAuthority ? (() => {
+        // A session files where its row lives: the project root's folders, or
+        // those of its own worktree, which itself files whole. Every other
+        // scope is read only to find and clear an older membership.
+        const workScope = getWorkFolderScope(folderOwnerKey);
         const scopes: string[] = [];
         const pushScope = (candidate: string | null | undefined) => {
           const normalized = normalizePath(candidate ?? null);
           if (normalized && !scopes.includes(normalized)) scopes.push(normalized);
         };
-        if (sessionProjectId && !isVSCode) {
-          const project = useProjectsStore.getState().projects.find((entry) => entry.id === sessionProjectId);
-          const projectRoot = normalizePath(project?.path ?? null);
-          pushScope(projectRoot);
-          if (projectRoot) {
-            (useSessionUIStore.getState().availableWorktreesByProject.get(projectRoot) ?? [])
-              .forEach((worktree) => pushScope(worktree.path));
-          }
+        const project = sessionProjectId && !isVSCode
+          ? useProjectsStore.getState().projects.find((entry) => entry.id === sessionProjectId)
+          : undefined;
+        const projectRoot = normalizePath(project?.path ?? null);
+        if (workScope) pushScope(workScope);
+        else if (projectRoot) pushScope(projectRoot);
+        else {
+          pushScope(getChatsRootFromDirectory(sessionDirectory));
+          pushScope(sessionDirectory);
         }
-        pushScope(getChatsRootFromDirectory(sessionDirectory));
+        const offeredScopes = [...scopes];
+        pushScope(projectRoot);
         pushScope(sessionDirectory);
-        const folderEntries = scopes.flatMap((scope) =>
+        if (projectRoot) {
+          (useSessionUIStore.getState().availableWorktreesByProject.get(projectRoot) ?? [])
+            .forEach((worktree) => pushScope(worktree.path));
+        }
+        const allEntries = scopes.flatMap((scope) =>
           getFoldersForScope(scope).map((folder) => ({ scope, folder })));
-        const currentEntry = folderEntries.find(({ scope, folder }) =>
+        const currentEntry = allEntries.find(({ scope, folder }) =>
           getSessionFolderId(scope, session.id) === folder.id) ?? null;
-        const defaultScope = scopes[0] ?? sessionDirectory;
+        const folderEntries = allEntries.filter((entry) => offeredScopes.includes(entry.scope) || entry === currentEntry);
+        const defaultScope = offeredScopes[0] ?? sessionDirectory;
+        const fileInNewFolder = (folderId: string): void => {
+          for (const scope of scopes) {
+            if (scope !== defaultScope) removeSessionFromFolder(scope, session.id);
+          }
+          addSessionToFolder(defaultScope, folderId, session.id);
+        };
+        if (workScope && folderEntries.length === 0) return null;
         return (
           <>
             <Separator />
@@ -1452,25 +1489,31 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
                         }
                         addSessionToFolder(scope, folder.id, session.id);
                       }}>
-                        <span className="flex-1 truncate">{folder.name}</span>
+                        <span dir="auto" className="oc-ui-start-align flex-1 truncate">{folder.name}</span>
                         {isCurrent ? <Icon name="check" className="ms-2 h-3.5 w-3.5 text-primary flex-shrink-0" /> : null}
                       </Item>
                     );
                   })
                 )}
-                <Separator />
-                <Item onClick={() => {
-                   const newFolder = createFolderAndStartRename(defaultScope);
-                   if (!newFolder) return;
-                   pendingFolderCreateRef.current = true;
-                  for (const scope of scopes) {
-                    if (scope !== defaultScope) removeSessionFromFolder(scope, session.id);
-                  }
-                  addSessionToFolder(defaultScope, newFolder.id, session.id);
-                }}>
-                  <Icon name="add" className="me-1 h-4 w-4" />
-                  {t('sessions.sidebar.folders.newFolderEllipsis')}
-                </Item>
+                {!workScope ? <>
+                  <Separator />
+                  <Item onClick={() => {
+                    if (isZoneRow) {
+                      requestNewFolder({
+                        projectLabel: project?.label?.trim() || (project ? formatDirectoryName(project.path, null) : null),
+                        create: (name) => fileInNewFolder(useSessionFoldersStore.getState().createFolder(defaultScope, name).id),
+                      });
+                      return;
+                    }
+                    const newFolder = createFolderAndStartRename(defaultScope);
+                    if (!newFolder) return;
+                    pendingFolderCreateRef.current = true;
+                    fileInNewFolder(newFolder.id);
+                  }}>
+                    <Icon name="add" className="me-1 h-4 w-4" />
+                    {t('sessions.sidebar.folders.newFolderEllipsis')}
+                  </Item>
+                </> : null}
                 {currentEntry ? (
                   <Item onClick={() => { removeSessionFromFolder(currentEntry.scope, session.id); }} className="text-destructive focus:text-destructive">
                     <Icon name="close" className="me-1 h-4 w-4" />
@@ -1628,6 +1671,7 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
       compact={!isTwoLineRow}
       leadToggle={leadToggle}
       leadIconClassName={leadToggle ? leadIconClassName : undefined}
+      leadMaskClassName={leadToggle && !alwaysShowActions ? 'group-hover:oc-lead-mask group-has-[:focus-visible]:oc-lead-mask' : undefined}
       project={timelineProject}
       projectLabel={tooltipProjectLabel}
       title={renderHighlightedText(sessionTitle, normalizedSessionSearchQuery)}
@@ -1742,6 +1786,7 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
       <DraggableSessionRow sessionId={session.id} dragKey={dragKey ?? sessionRowKey} ownerKey={folderOwnerKey ?? selectionScopeKey} sessionDirectory={sessionDirectory ?? null} sessionTitle={sessionTitle} archivedBucket={archivedBucket}>
         <ContextMenuRoot open={isContextMenuOpen} onOpenChange={handleContextMenuOpenChange} onOpenChangeComplete={handleMenuOpenChangeComplete}>
           <ContextMenu.Trigger
+            onKeyDown={openContextMenuFromKeyboard}
             render={
               <div
                 data-session-row={session.id}
@@ -1940,7 +1985,7 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
                   className={cn(
                     'inline-flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                     !alwaysShowActions
-                      ? (isSessionMenuOpen
+                      ? cn('pointer-fine:hidden', isSessionMenuOpen
                           ? 'h-4 w-4 opacity-100'
                           : cn('h-4 w-4 opacity-0', revealOnHoverClass))
                       : 'h-6 w-6 opacity-100',
@@ -1963,6 +2008,9 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
         </ContextMenuRoot>
       </DraggableSessionRow>
       {hasChildren && isExpanded ? children : null}
+      {moveDialogOpen && sessionDirectory ? (
+        <MoveSessionDialog open onOpenChange={setMoveDialogOpen} sessionId={session.id} sourceDirectory={sessionDirectory} />
+      ) : null}
       <Dialog open={exportDialogOpen} onOpenChange={setExportDialogOpen}>
         <DialogContent showCloseButton={false} className="max-w-sm gap-5">
           <DialogHeader>

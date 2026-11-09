@@ -52,6 +52,13 @@ with its named pin lists. How the rows are drawn stays with the row model
   clock that moves by the local hour while such a section is shown
   (`useSidebarSectionsNow`), so "Today" turns over at local midnight in any
   time zone.
+- The Folder condition asks for folders of a project's root by id, across
+  projects. A session is in a folder when it is filed there, a worktree or a
+  space likewise. Chats and folders inside a worktree are not offered, as
+  sections list neither. The list comes from `foldersMap`, so it needs no read
+  of its own. Deleting a folder takes it out of every section as deleting a pin
+  list does (`removeFolderFromSections`), and a section left asking for no
+  folder goes with it.
 - "Scheduled run" is a type of its own beside what the work is (a session or a
   worktree): a work whose top-level session a scheduled task started
   (`openchamber.kind = 'scheduled'`, cleared on a fork). With the text
@@ -87,6 +94,10 @@ with its named pin lists. How the rows are drawn stays with the row model
   Unread and failed come from the session record (`time.idle` / `time.viewed`,
   `outcome`), so they survive a restart; running and waiting requests from the
   live indexes.
+- Running and unread follow the session's row (`useSessionTurnActivity`). A
+  session idling on a subagent, a background command, a workflow run or its
+  pull request is running, and turns unread only when that work ends, though
+  its record already carries `time.idle`.
 - The Plan link comes from project knowledge, which lives outside the session.
   It is read only for the projects a shown section asks plans of (every project
   when it names none), once each through the background gate, and again when

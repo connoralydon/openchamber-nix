@@ -15,6 +15,7 @@ export const createGracefulShutdownRuntime = (dependencies) => {
     sessionWarmingRuntime,
     autoReviewRuntime,
     prWatchRuntime,
+    mergeFollowRuntime,
     messageQueueRuntime,
     dispatchResultsRuntime,
     workflowRuntime = null,
@@ -40,6 +41,7 @@ export const createGracefulShutdownRuntime = (dependencies) => {
     tunnelAuthController,
     beginGuestServiceShutdown,
     stopAllGuestServices,
+    extensionServiceLifetime,
     extensionSessionEvents,
     getGuestSurfaceRuntime,
     getRealtimeProxyRuntime,
@@ -47,6 +49,7 @@ export const createGracefulShutdownRuntime = (dependencies) => {
     getRelayService,
     getRelayReconcileTimer,
     getSpacesHost = () => null,
+    stopFolderWatches = () => {},
   } = dependencies;
 
   let shutdownPromise = null;
@@ -77,6 +80,7 @@ export const createGracefulShutdownRuntime = (dependencies) => {
     // subscriber in the same tick, so no event reaches a service's refusal
     // ("the host is shutting down") and reads as a broken service entry.
     extensionSessionEvents?.stop?.();
+    extensionServiceLifetime?.stop?.();
     syncToHmrState();
     console.log('Starting graceful shutdown...');
     const exitProcess = typeof options.exitProcess === 'boolean' ? options.exitProcess : getExitOnShutdown();
@@ -91,6 +95,7 @@ export const createGracefulShutdownRuntime = (dependencies) => {
       () => getSpacesHost()?.close(),
       () => getRelayService()?.stop(),
       () => getDictationRuntime()?.stop(),
+      stopFolderWatches,
       () => openCodeWatcherRuntime.stop(),
       () => sessionRuntime.dispose(),
       () => sessionAssistRuntime?.stop?.(),
@@ -100,6 +105,7 @@ export const createGracefulShutdownRuntime = (dependencies) => {
       () => sessionWarmingRuntime?.stop?.(),
       () => autoReviewRuntime?.stop?.(),
       () => prWatchRuntime?.stop?.(),
+      () => mergeFollowRuntime?.stop?.(),
       () => messageQueueRuntime?.stop?.(),
       () => dispatchResultsRuntime?.stop?.(),
       () => workflowRuntime?.shutdown(),

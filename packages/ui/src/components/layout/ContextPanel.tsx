@@ -15,6 +15,7 @@ import { useRepositoryUrlMatcher } from '@/lib/source-control/repositoryUrlMatch
 import { useTrackerUrlMatcher } from '@/lib/trackers/matchTrackerUrl';
 import { trackerPresentation } from '@/lib/trackers/presentation';
 import { lazyWithChunkRecovery } from '@/lib/chunkLoadRecovery';
+import { isDesktopShell } from '@/lib/desktop';
 import { getDisambiguatingFolders } from '@/lib/path-utils';
 
 // Heavy views stay on-demand (same as MainLayout): importing GitView or the
@@ -52,6 +53,7 @@ import { useChangeRequestTerm } from '@/lib/source-control/providers/registry';
 import { ContextPanelHeaderSlotProvider } from './contextPanelHeaderSlot';
 import { CLOSED_ZONE_VIEW, CONTEXT_ZONE_DEFAULT_WIDTH, getZoneView, isZoneShown, resolveZoneActiveTab, sideZoneWidth, type ContextZone } from '@/lib/workspace/zones';
 import { registerCloseTabTarget } from '@/lib/closeTabTarget';
+import { useClosingZoneTab } from './useClosingZoneTab';
 import { ZoneMoveMenuItems } from './ZoneMoveMenuItems';
 import { beginZoneDrag, cancelZoneDrag, finishZoneDrag, startZoneDragGesture, updateZoneDrag } from './zoneDrag';
 import { setZoneBody, setZoneHeaderSlot } from './zoneHosts';
@@ -449,7 +451,7 @@ export const ContextPanel: React.FC<{ zone?: ContextZone }> = ({ zone = 'right' 
 
   const tabs = React.useMemo(() => panelState?.tabs ?? [], [panelState?.tabs]);
   // This zone's tab: one of its own surfaces, never one placed elsewhere.
-  const activeTab = panelState ? resolveZoneActiveTab(panelState, placement, zone) : null;
+  const storedActiveTab = panelState ? resolveZoneActiveTab(panelState, placement, zone) : null;
   const zoneView = panelState ? getZoneView(panelState, zone) : CLOSED_ZONE_VIEW;
   const workStatusReserved = useRightSlotStore((state) => state.workStatusReserved);
   const workStatusBesidePanel = useRightSlotStore((state) => state.workStatusBesidePanel);
@@ -457,7 +459,8 @@ export const ContextPanel: React.FC<{ zone?: ContextZone }> = ({ zone = 'right' 
   // The bottom zone belongs to the chat column: a page covering the chat
   // covers it too.
   const coveredByPage = zone === 'bottom' && chatCovered;
-  const isOpen = Boolean(zoneView.isOpen && activeTab) && !coveredByPage;
+  const isOpen = Boolean(zoneView.isOpen && storedActiveTab) && !coveredByPage;
+  const activeTab = useClosingZoneTab(storedActiveTab, isOpen);
   const hasOpenEditorFile = React.useMemo(
     () => tabs.some((tab) => tab.mode === 'file' && tab.targetPath),
     [tabs],
@@ -851,6 +854,7 @@ export const ContextPanel: React.FC<{ zone?: ContextZone }> = ({ zone = 'right' 
   // The branch tab is named after the branch checked out here.
   const trackerBranch = useGitStatus(activeTab?.mode === 'pr' && directoryKey ? directoryKey : null)?.current ?? null;
 
+  const activeTabId = activeTab?.id;
   const tabItems = React.useMemo(() => {
     const fileFolders = getDisambiguatingFolders(activeModeTabs
       .filter((tab) => tab.mode === 'file')
@@ -867,11 +871,12 @@ export const ContextPanel: React.FC<{ zone?: ContextZone }> = ({ zone = 'right' 
         icon: getTabIcon(tab, faviconByOrigin),
         title: tabPathLabel ? `${rawLabel}: ${tabPathLabel}` : rawLabel,
         closeLabel: t('contextPanel.tab.closeTabAria', { label }),
+        closeShortcut: tab.id === activeTabId && isDesktopShell() ? formatShortcutForDisplay('mod+w', '') : undefined,
         closable: !branchTab,
         preview: tab.preview,
       };
     });
-  }, [activeModeTabs, effectiveDirectory, faviconByOrigin, sessionTitleById, t, tabT, trackerBranch]);
+  }, [activeModeTabs, activeTabId, effectiveDirectory, faviconByOrigin, sessionTitleById, t, tabT, trackerBranch]);
 
   const activeNonChatContent = activeTab?.mode === 'context'
         ? <ContextPanelHeaderSlotProvider value={headerSlotEl}><ContextPanelContent /></ContextPanelHeaderSlotProvider>
@@ -1070,6 +1075,8 @@ export const ContextPanel: React.FC<{ zone?: ContextZone }> = ({ zone = 'right' 
       )}
       <div className="flex h-10 shrink-0 items-center gap-1 self-start px-1.5">
         {activeTab?.mode === 'browser' ? (
+          <Tooltip>
+          <TooltipTrigger asChild>
           <Button
             type="button"
             variant="ghost"
@@ -1079,11 +1086,13 @@ export const ContextPanel: React.FC<{ zone?: ContextZone }> = ({ zone = 'right' 
               openNewContextBrowserTab(directoryKey);
             }}
             className="h-7 w-7 p-0"
-            title={t('contextPanel.browser.newTab')}
             aria-label={t('contextPanel.browser.newTab')}
           >
             <Icon name="add" className="h-3.5 w-3.5" />
           </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" sideOffset={6}>{t('contextPanel.browser.newTab')}</TooltipContent>
+          </Tooltip>
         ) : null}
         {/* Each icon toggles the column on its side: the editor and the tree
             swap sides with the file tree side setting, the icons stay put. */}
@@ -1091,20 +1100,27 @@ export const ContextPanel: React.FC<{ zone?: ContextZone }> = ({ zone = 'right' 
           const isTree = side === fileTreeSide;
           if (!isTree && !hasOpenEditorFile) return null;
           const label = isTree ? t('contextRail.editorTree.toggle') : t('contextRail.editor.toggle');
+          const shown = isTree ? contextEditorTreeVisible : showsEditor;
+          const tooltip = isTree
+            ? t(shown ? 'contextTooltips.panel.hideFileTree' : 'contextTooltips.panel.showFileTree')
+            : t(shown ? 'contextTooltips.panel.hideFileEditor' : 'contextTooltips.panel.showFileEditor');
           return (
+            <Tooltip key={side}>
+            <TooltipTrigger asChild>
             <Button
-              key={side}
               type="button"
               variant="ghost"
               size="sm"
               onClick={isTree ? toggleContextEditorTree : toggleContextEditor}
               className="h-7 w-7 p-0"
-              title={label}
               aria-label={label}
-              aria-pressed={isTree ? contextEditorTreeVisible : showsEditor}
+              aria-pressed={shown}
             >
               <Icon name={side === 'left' ? 'layout-left' : 'layout-right'} className="h-3.5 w-3.5" />
             </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" sideOffset={6}>{tooltip}</TooltipContent>
+            </Tooltip>
           );
         }) : null}
         {!isTreeOnly ? (
@@ -1124,17 +1140,21 @@ export const ContextPanel: React.FC<{ zone?: ContextZone }> = ({ zone = 'right' 
           <TooltipContent side="bottom" sideOffset={6}><TooltipLabelWithShortcut label={isExpanded ? t('contextPanel.actions.collapsePanel') : t('contextPanel.actions.expandPanel')} shortcut={formatShortcutForDisplay(getEffectiveShortcutCombo('toggle_context_panel_expanded', shortcutOverrides), '')} /></TooltipContent>
           </Tooltip>
         ) : null}
+        <Tooltip>
+        <TooltipTrigger asChild>
         <Button
           type="button"
           variant="ghost"
           size="sm"
           onClick={handleClose}
           className="h-7 w-7 p-0"
-          title={t('contextPanel.actions.closePanel')}
           aria-label={t('contextPanel.actions.closePanel')}
         >
           <Icon name="close" className="h-3.5 w-3.5" />
         </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" sideOffset={6}>{t('contextPanel.actions.closePanel')}</TooltipContent>
+        </Tooltip>
       </div>
     </header>
   );

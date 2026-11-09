@@ -23,6 +23,7 @@ import {
   mentionSearchKey,
   mentionServerQuery,
   rankFileMentionResults,
+  type FileMentionHit,
 } from './fileMentionResults';
 import { matchesRankQuery, rankByQuery } from '@/lib/search/fuzzySearch';
 import { AutocompleteLoadingRow, AutocompleteRowDetail } from './composer/ui/AutocompleteRowParts';
@@ -31,6 +32,11 @@ import type { Session } from '@/lib/opencode/model';
 import { ensureGlobalSessionsLoaded, resolveGlobalSessionDirectory, useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { useAutocompleteSelectionScroll } from './composer/ui/useAutocompleteSelectionScroll';
 import { useHeightMorph } from '@/lib/motion/useSizeMorph';
+import { guestsOfferMentions, searchGuestMentions, type GuestMention } from '@/lib/guests/mentions';
+import { useGuestsStore } from '@/lib/guests/store';
+import { guestPackageIconSrc, resolveGuestIconName } from '@/lib/guests/icon';
+import { getRuntimeUrlResolver } from '@/lib/runtime-url';
+import { GuestIcon } from '@/components/layout/GuestRailIcon';
 
 /** Subagents listed before the user types; the rest are a keystroke away. */
 const AGENTS_SHOWN_WITHOUT_QUERY = 6;
@@ -43,6 +49,35 @@ type AgentInfo = {
   mode?: string | null;
 };
 
+/** The rows the list shows, top to bottom, and the search they answer. */
+type MentionRows = {
+  key: string | null;
+  agents: AgentInfo[];
+  moreAgents: boolean;
+  recentFiles: FileInfo[];
+  results: FileMentionHit[];
+  sessions: Session[];
+  extensions: GuestMention[];
+};
+
+/** The extension's own mark, so a row says whose it is before it is read. */
+const ExtensionMentionIcon = ({ guestId }: { guestId: string }) => {
+  const icon = useGuestsStore((state) => state.guests.find((guest) => guest.id === guestId)?.icon) ?? '';
+  const iconSrc = React.useMemo(
+    () => guestPackageIconSrc(guestId, icon, getRuntimeUrlResolver().authenticatedAsset),
+    [guestId, icon],
+  );
+  return <GuestIcon icon={resolveGuestIconName(icon)} iconSrc={iconSrc} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
+};
+
+const mentionRowIds = ({ agents, recentFiles, results, sessions, extensions }: MentionRows): string[] => [
+  ...agents.map((agent) => `agent:${agent.name}`),
+  ...recentFiles.map((file) => `file:${file.path}`),
+  ...results.map((file) => `file:${file.path}`),
+  ...sessions.map((session) => `session:${session.id}`),
+  ...extensions.map((mention) => `extension:${mention.guestId}:${mention.id}`),
+];
+
 export interface FileMentionHandle {
   handleKeyDown: (key: string) => void;
 }
@@ -53,6 +88,8 @@ interface FileMentionAutocompleteProps {
   onAgentSelect?: (agentName: string) => void;
   /** Lists other sessions by title once the user types; without it, none. */
   onSessionSelect?: (session: Session) => void;
+  /** Lists rows from extensions that answer `@`; without it, none. */
+  onExtensionMentionSelect?: (mention: GuestMention) => void;
   /** The session being written in, which the session list leaves out. */
   currentSessionId?: string | null;
   onClose: () => void;
@@ -64,6 +101,7 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
   onFileSelect,
   onAgentSelect,
   onSessionSelect,
+  onExtensionMentionSelect,
   currentSessionId = null,
   onClose,
   style,
@@ -125,6 +163,7 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
   const searchPending = wantedSearchKey !== null && search?.key !== wantedSearchKey;
   const [selectedIndex, setSelectedIndex] = React.useState(0);
   const selectedIndexRef = React.useRef(0);
+  const previousViewRef = React.useRef<MentionRows | null>(null);
   const [marqueeWidth, setMarqueeWidth] = React.useState(360);
   // Only the selected row scrolls an overflowing path, so only it is measured.
   const [selectedOverflow, setSelectedOverflow] = React.useState<{ index: number; duration: number } | null>(null);
@@ -270,13 +309,31 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
     const files = settledSearch.files.filter((hit) => !recentSet.has(hit.path));
     return rankFileMentionResults(files, settledSearch.directories, normalizedSearchQuery, 20);
   }, [settledSearch, visibleRecentFiles, normalizedSearchQuery]);
-  const liveView = React.useMemo(() => ({
+  const settledSearchKey = settledSearch?.key ?? null;
+  // Extensions answer on their own time: their rows join the list when they
+  // arrive and never hold the files back.
+  const asksExtensions = useGuestsStore((state) => onExtensionMentionSelect !== undefined && guestsOfferMentions(state.guests));
+  const [extensionRows, setExtensionRows] = React.useState<GuestMention[]>([]);
+  React.useEffect(() => {
+    if (!asksExtensions) {
+      setExtensionRows([]);
+      return undefined;
+    }
+    const controller = new AbortController();
+    void searchGuestMentions(debouncedQuery ?? '', currentDirectory || null, controller.signal).then((rows) => {
+      if (!controller.signal.aborted) setExtensionRows(rows);
+    });
+    return () => controller.abort();
+  }, [asksExtensions, currentDirectory, debouncedQuery]);
+  const liveView = React.useMemo<MentionRows>(() => ({
+    key: settledSearchKey,
     agents: visibleAgents,
     moreAgents: visibleAgents.length < agents.length,
     recentFiles: visibleRecentFiles,
     results: visibleResults,
     sessions: visibleSessions,
-  }), [agents.length, visibleAgents, visibleRecentFiles, visibleResults, visibleSessions]);
+    extensions: extensionRows,
+  }), [agents.length, extensionRows, settledSearchKey, visibleAgents, visibleRecentFiles, visibleResults, visibleSessions]);
   // While a query searches, the popup keeps the last settled rows, so it does
   // not collapse and regrow on every keystroke: its height changes once per
   // answer, by what the answer changed.
@@ -285,7 +342,7 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
     setHeldView(liveView);
   }
   const view = searchPending ? heldView : liveView;
-  const rowCount = view.agents.length + view.recentFiles.length + view.results.length + view.sessions.length;
+  const rowCount = view.agents.length + view.recentFiles.length + view.results.length + view.sessions.length + view.extensions.length;
   const listState = mentionListState(rowCount, searchPending);
 
   React.useEffect(() => {
@@ -312,14 +369,29 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
     }
 
     let cancelled = false;
+    let answered = false;
     const serverQuery = mentionServerQuery(debouncedQuery ?? '');
     const options = { includeHidden: showHidden, respectGitignore: !showGitignored };
-    // One answer for both kinds, so the rows change once; a failed kind
-    // lists nothing without taking the other kind's hits with it.
+    // A failed kind lists nothing without taking the other kind's hits with it.
+    const directorySearch = searchFiles(currentDirectory, serverQuery, 20, { ...options, type: 'directory' }).catch((): FileInfo[] => []);
+    // OpenCode's index answers at once; the search behind the hidden and
+    // gitignored toggles can walk the project for seconds. Its hits are shown
+    // as soon as there are any, and the toggles' extra rows join them later.
     void Promise.all([
-      searchFiles(currentDirectory, serverQuery, 80, { ...options, type: 'file' }).catch((): FileInfo[] => []),
-      searchFiles(currentDirectory, serverQuery, 20, { ...options, type: 'directory' }).catch((): FileInfo[] => []),
+      searchFiles(currentDirectory, serverQuery, 80, { type: 'file' }).catch((): FileInfo[] => []),
+      directorySearch,
     ]).then(([files, directories]) => {
+      if (!cancelled && !answered && files.length + directories.length > 0) {
+        setSearch({ key: debouncedSearchKey, files, directories });
+      }
+    });
+    // A new query or a closed list stops that walk; nobody is left to read it.
+    const walk = new AbortController();
+    void Promise.all([
+      searchFiles(currentDirectory, serverQuery, 80, { ...options, type: 'file', signal: walk.signal }).catch((): FileInfo[] => []),
+      directorySearch,
+    ]).then(([files, directories]) => {
+      answered = true;
       if (!cancelled) {
         setSearch({ key: debouncedSearchKey, files, directories });
       }
@@ -327,17 +399,25 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
 
     return () => {
       cancelled = true;
+      walk.abort();
     };
   }, [currentDirectory, debouncedQuery, debouncedSearchKey, searchFiles, showHidden, showGitignored]);
 
-  // A new answer starts at its best match; rows held while a query searches
-  // keep the selection where the keyboard put it.
-  React.useEffect(() => {
-    setSelectedIndex(0);
+  // A new query's answer starts at its best match; rows held while a query
+  // searches keep the selection where the keyboard put it, and new rows for
+  // the same query leave it on the row the user is on. Before paint and the
+  // next key, so Enter never reads the old position in the new rows.
+  React.useLayoutEffect(() => {
+    const previous = previousViewRef.current;
+    previousViewRef.current = view;
+    const selected = previous && view.key !== null && previous.key === view.key
+      ? mentionRowIds(previous)[selectedIndexRef.current]
+      : undefined;
+    setSelectedIndex(selected === undefined ? 0 : Math.max(mentionRowIds(view).indexOf(selected), 0));
     setSelectedOverflow(null);
   }, [view]);
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     selectedIndexRef.current = selectedIndex;
   }, [selectedIndex]);
 
@@ -448,6 +528,11 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
         }
         const recentIndex = safeIndex - view.agents.length;
         const fileCount = view.recentFiles.length + view.results.length;
+        if (recentIndex >= fileCount + view.sessions.length) {
+          const mention = view.extensions[recentIndex - fileCount - view.sessions.length];
+          if (mention) onExtensionMentionSelect?.(mention);
+          return;
+        }
         if (recentIndex >= fileCount) {
           const session = view.sessions[recentIndex - fileCount];
           if (session) onSessionSelect?.(session);
@@ -461,7 +546,7 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
         }
       }
     }
-  }), [view, rowCount, onClose, handleFileSelect, handleAgentPick, onSessionSelect, onKeyboardNavigate]);
+  }), [view, rowCount, onClose, handleFileSelect, handleAgentPick, onSessionSelect, onExtensionMentionSelect, onKeyboardNavigate]);
 
   const getFileIcon = (file: FileInfo) => {
     const ext = file.extension?.toLowerCase();
@@ -669,6 +754,28 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
                   <Icon name="chat-3" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   <span className="max-w-[60%] shrink-0 truncate font-medium">{session.title}</span>
                   <AutocompleteRowDetail description={detail} />
+                </div>
+              );
+            })}
+            {view.extensions.length > 0 && (view.agents.length > 0 || view.recentFiles.length > 0 || view.results.length > 0 || view.sessions.length > 0) && (
+              <div className="my-1 border-t border-edge" />
+            )}
+            {view.extensions.map((mention, index) => {
+              const rowIndex = view.agents.length + view.recentFiles.length + view.results.length + view.sessions.length + index;
+              return (
+                <div
+                  key={`extension-${mention.guestId}-${mention.id}`}
+                  ref={(el) => { itemRefs.current[rowIndex] = el; }}
+                  className={cn(
+                    'flex items-center gap-2 px-2 py-1.5 cursor-pointer typography-ui-label rounded-lg',
+                    selectedIndex === rowIndex && 'bg-interactive-selection',
+                  )}
+                  onClick={() => onExtensionMentionSelect?.(mention)}
+                  onMouseMove={() => { setSelectedIndex(rowIndex); }}
+                >
+                  <ExtensionMentionIcon guestId={mention.guestId} />
+                  <span className="max-w-[60%] shrink-0 truncate font-medium">{mention.title}</span>
+                  <AutocompleteRowDetail description={mention.subtitle ?? mention.label} />
                 </div>
               );
             })}

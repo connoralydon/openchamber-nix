@@ -426,6 +426,40 @@ describe('actions and commands on the public row', () => {
   });
 });
 
+describe('an OpenCode plugin in the package', () => {
+  const writePluginGuest = async (root, plugin) => {
+    await fs.mkdir(root, { recursive: true });
+    await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({
+      name: '@openchamber/teapot', version: '1.0.0',
+      openchamber: { apiVersion: 1, contributes: { panel: { id: 'teapot', name: 'Teapot', icon: 'cup' }, opencodePlugin: 'plugin' } },
+    }));
+    if (plugin) {
+      await fs.mkdir(path.join(root, 'plugin'), { recursive: true });
+      await fs.writeFile(path.join(root, 'plugin', 'package.json'), JSON.stringify(plugin));
+      await fs.writeFile(path.join(root, 'plugin', 'index.js'), 'export default { id: "teapot", setup: async () => {} }');
+    }
+  };
+
+  test('the install refuses a missing folder and lists a good one on the row', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'oc-guest-plugin-'));
+    const root = path.join(dir, 'teapot');
+    await writePluginGuest(root, null);
+    expect(await inspectGuestPackage(root)).toEqual({ ok: false, code: 'invalid-opencode-plugin' });
+    await writePluginGuest(root, { name: 'teapot-plugin', version: '1.0.0', type: 'module' });
+    const inspected = await inspectGuestPackage(root);
+    expect(inspected.ok).toBe(true);
+    if (inspected.ok) {
+      expect(inspected.guest.opencodePlugin).toBe('plugin');
+      const row = toPublicGuest({ ...inspected.guest, source: 'path', path: root, capabilityGrants: [] });
+      expect(row.opencodePlugin).toBe(true);
+      expect(row.capabilities).toEqual({ requested: ['opencodePlugin'], granted: [] });
+      // The plugin folder stays on the server: the row says only that there is one.
+      expect(JSON.stringify(row)).not.toContain(path.join(root, 'plugin'));
+    }
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+});
+
 describe('grant scopes', () => {
   const writeScopedGuest = async (root, filesystem) => {
     await fs.mkdir(path.join(root, 'panel'), { recursive: true });
@@ -545,6 +579,33 @@ describe('session events', () => {
         capabilities: { requested: ['service', 'transcript'], granted: [] },
       });
       expect(row).not.toHaveProperty('entry');
+      expect(hasGuestFrame(inspected.guest)).toBe(false);
+    } finally { await fs.rm(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe('usage providers', () => {
+  test('a quota package publishes the providers whose credentials it receives, for the dialog, and loads no frame', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'oc-quota-'));
+    try {
+      await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({ version: '1.0.0', openchamber: {
+        apiVersion: 1, contributes: {
+          panel: { id: 'teapot-usage', name: 'Teapot Usage', icon: 'cup' },
+          service: { entry: 'service/main.js', runtime: 'host', provides: ['quota'] },
+          quota: { providers: ['teapot', 'openrouter'] },
+        },
+      } }));
+      await fs.mkdir(path.join(dir, 'service'));
+      await fs.writeFile(path.join(dir, 'service/main.js'), 'console.log("service")');
+      const inspected = await inspectGuestPackage(dir);
+      expect(inspected.ok).toBe(true);
+      expect(inspected.guest.quota).toEqual({ providers: ['teapot', 'openrouter'] });
+      const row = toPublicGuest({ ...inspected.guest, capabilityGrants: [] });
+      expect(row).toMatchObject({
+        quota: { providers: ['teapot', 'openrouter'] },
+        service: { provides: ['quota'] },
+        capabilities: { requested: ['service'], granted: [] },
+      });
       expect(hasGuestFrame(inspected.guest)).toBe(false);
     } finally { await fs.rm(dir, { recursive: true, force: true }); }
   });
